@@ -1,0 +1,9 @@
+{
+  "id": "updater-plugin",
+  "name": "Updater Plugin",
+  "version": "0.4.0",
+  "minAppVersion": "1.5.0",
+  "description": "Fast one-button updater using a single central registry in volnexx/obsidian-plugins, with full vault backup and rollback.",
+  "author": "volnexx",
+  "isDesktopOnly": true
+}
