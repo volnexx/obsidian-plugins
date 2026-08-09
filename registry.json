@@ -5,25 +5,19 @@
       "id": "experience",
       "name": "Опыт",
       "version": "0.3.0",
-      "path": "experience",
-      "sourceRepo": "volnexx/experience",
-      "sourceBranch": "main"
+      "path": "experience"
     },
     {
       "id": "term-interval-review",
       "name": "Повторение терминов",
       "version": "0.16.0",
-      "path": "priority-recall",
-      "sourceRepo": "volnexx/Priority-Recall",
-      "sourceBranch": "main"
+      "path": "priority-recall"
     },
     {
       "id": "memory-monitor-ru",
       "name": "Монитор ресурсов",
       "version": "1.1.0",
-      "path": "resource-monitor",
-      "sourceRepo": "volnexx/Resource-Monitor",
-      "sourceBranch": "main"
+      "path": "resource-monitor"
     }
   ]
 }
