@@ -1,0 +1,9 @@
+{
+  "id": "term-interval-review",
+  "name": "Повторение терминов",
+  "version": "0.16.0",
+  "minAppVersion": "1.8.0",
+  "description": "Повторение определений **термин — определение** по фиксированным интервалам.",
+  "author": "папочка",
+  "isDesktopOnly": false
+}
