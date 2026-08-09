@@ -1,0 +1,7 @@
+.vsu-plugin-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--background-secondary);
+}
