@@ -1,0 +1,167 @@
+name: Release Updater 0.8.0
+
+on:
+  push:
+    paths:
+      - '.github/workflows/release-updater-080.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Patch updater
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, re
+          p=Path('updater-plugin/main.js')
+          s=p.read_text(encoding='utf-8')
+
+          old='''          result.set(m.id, {
+            id: m.id,
+            name: m.name || m.id,
+            version: m.version || "0.0.0",
+            dir: path.join(root, e.name),
+            manifest: m
+          });'''
+          new='''          result.set(m.id, {
+            id: m.id,
+            name: m.name || m.id,
+            version: m.version || "0.0.0",
+            dir: path.join(root, e.name),
+            folderName: e.name,
+            manifest: m
+          });'''
+          if old not in s: raise SystemExit('local plugin block not found')
+          s=s.replace(old,new,1)
+
+          start=s.find('  async resolveRegistryPlugins() {')
+          end=s.find('  async checkOnly() {',start)
+          if start<0 or end<0: raise SystemExit('resolve block not found')
+          block=r'''  normalizePluginIdentity(value) {
+            return String(value || "")
+              .toLowerCase()
+              .normalize("NFKD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/[^a-z0-9а-яё]+/giu, "");
+          }
+
+          matchRemoteToLocal(entry, installed) {
+            const exact = installed.get(entry.id);
+            if (exact) return { local: exact, matchedBy: "id", ambiguous: false };
+
+            const locals = Array.from(installed.values());
+            const remoteFolder = this.normalizePluginIdentity(
+              String(entry.path || "").split("/").filter(Boolean).pop()
+            );
+
+            if (remoteFolder) {
+              const folderMatches = locals.filter(local =>
+                this.normalizePluginIdentity(local.folderName) === remoteFolder
+              );
+              if (folderMatches.length === 1) return { local: folderMatches[0], matchedBy: "folder", ambiguous: false };
+              if (folderMatches.length > 1) return { local: null, matchedBy: "folder", ambiguous: true };
+            }
+
+            const remoteName = this.normalizePluginIdentity(entry.name || entry.manifest?.name);
+            if (remoteName) {
+              const nameMatches = locals.filter(local =>
+                this.normalizePluginIdentity(local.name || local.manifest?.name) === remoteName
+              );
+              if (nameMatches.length === 1) return { local: nameMatches[0], matchedBy: "name", ambiguous: false };
+              if (nameMatches.length > 1) return { local: null, matchedBy: "name", ambiguous: true };
+            }
+
+            return { local: null, matchedBy: "none", ambiguous: false };
+          }
+
+          async resolveRegistryPlugins() {
+            const [remote, installed] = await Promise.all([
+              this.listRepositoryPluginFolders(),
+              this.readInstalledPlugins()
+            ]);
+            const all = remote.map(entry => {
+              const match = this.matchRemoteToLocal(entry, installed);
+              return { entry, local: match.local, matchedBy: match.matchedBy, ambiguous: match.ambiguous };
+            });
+            return {
+              all,
+              installed: all.filter(x => x.local && !x.ambiguous),
+              ambiguous: all.filter(x => x.ambiguous)
+            };
+          }
+
+          '''
+          s=s[:start]+block+s[end:]
+
+          old_check='''      const discovered = await this.resolveRegistryPlugins();
+                const plugins = discovered.installed;
+                const updates = plugins.filter(p => compareVersions(p.entry.version, p.local.version) > 0);
+                if (!updates.length) {
+                  new Notice(`В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений нет.`);
+                  return;
+                }'''
+          new_check='''      const discovered = await this.resolveRegistryPlugins();
+                const plugins = discovered.installed;
+                const migrated = plugins.filter(p => p.matchedBy !== "id");
+                if (migrated.length) new Notice(`Найдены переименованные плагины: ${migrated.map(p => `${p.local.name} (${p.matchedBy})`).join("; ")}`, 8000);
+                if (discovered.ambiguous.length) new Notice(`Неоднозначных совпадений: ${discovered.ambiguous.length}. Они пропущены.`, 8000);
+                const updates = plugins.filter(p => compareVersions(p.entry.version, p.local.version) > 0);
+                if (!updates.length) {
+                  new Notice(`В репозитории: ${discovered.all.length}; сопоставлено локально: ${plugins.length}; обновлений нет.`);
+                  return;
+                }'''
+          if old_check not in s: raise SystemExit('check block not found')
+          s=s.replace(old_check,new_check,1)
+
+          old_safe='''      const discovered = await this.resolveRegistryPlugins();
+                const plugins = discovered.installed;
+                if (!plugins.length) {
+                  new Notice(`В репозитории найдено: ${discovered.all.length}; локально установлено: 0.`);
+                  return;
+                }
+                const updates = plugins.filter(p =>
+                  compareVersions(p.entry.version, p.local.version) > 0
+                );'''
+          new_safe='''      const discovered = await this.resolveRegistryPlugins();
+                const plugins = discovered.installed;
+                if (!plugins.length) {
+                  new Notice(`В репозитории найдено: ${discovered.all.length}; сопоставлено локально: 0.`);
+                  return;
+                }
+                const migrated = plugins.filter(p => p.matchedBy !== "id");
+                if (migrated.length) new Notice(`Сопоставлены после переименования: ${migrated.map(p => `${p.local.name} (${p.matchedBy})`).join("; ")}`, 8000);
+                if (discovered.ambiguous.length) new Notice(`Неоднозначных совпадений: ${discovered.ambiguous.length}. Они пропущены для безопасности.`, 8000);
+                const updates = plugins.filter(p =>
+                  compareVersions(p.entry.version, p.local.version) > 0
+                );'''
+          if old_safe not in s: raise SystemExit('safe block not found')
+          s=s.replace(old_safe,new_safe,1)
+
+          s=s.replace('const normalUpdates = prepared.filter(p => p.local.id !== this.manifest.id);','const normalUpdates = prepared.filter(p => p.local.id !== this.manifest.id && p.entry.id !== this.manifest.id);')
+          s=s.replace('const selfUpdate = prepared.find(p => p.local.id === this.manifest.id) || null;','const selfUpdate = prepared.find(p => p.local.id === this.manifest.id || p.entry.id === this.manifest.id) || null;')
+          p.write_text(s,encoding='utf-8')
+
+          mp=Path('updater-plugin/manifest.json')
+          m=json.loads(mp.read_text(encoding='utf-8'))
+          m['version']='0.8.0'
+          m['description']='Auto-discovers central-repo plugins and survives plugin ID/folder renames, with backup, rollback/redo and self-update.'
+          mp.write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+      - name: Validate JavaScript
+        run: node --check updater-plugin/main.js
+      - name: Commit release
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updater-plugin/main.js updater-plugin/manifest.json
+          git commit -m 'Release Updater Plugin 0.8.0'
+          git push origin HEAD:centralize-plugins
