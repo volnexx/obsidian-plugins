@@ -267,6 +267,10 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   color: var(--text-normal);
 }
 
+.tir-multi-pin-toggle.is-active .tir-multi-pin-icon {
+  color: var(--interactive-accent);
+}
+
 .tir-pin-toggle {
   appearance: none;
   display: inline-flex;
@@ -409,10 +413,7 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-review-urgent-toggle.is-active {
-  min-width: 72px;
-  padding-inline: 12px;
-  font-size: var(--font-ui-small);
-  line-height: 1.2;
+  color: var(--interactive-accent) !important;
 }
 
 .tir-review-urgent-toggle.tir-multi-pin-toggle {
