@@ -411,8 +411,16 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async rawText(repo, branch, file) {
-    const url = `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/${file}`;
-    const r = await requestUrl({ url, method: "GET" });
+    const cacheKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const url = `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/${file}?updater=${cacheKey}`;
+    const r = await requestUrl({
+      url,
+      method: "GET",
+      headers: {
+        "Cache-Control": "no-cache, no-store",
+        "Pragma": "no-cache"
+      }
+    });
     if (r.status < 200 || r.status >= 300) {
       throw new Error(`${repo}/${file}: HTTP ${r.status}`);
     }
@@ -425,7 +433,9 @@ module.exports = class UpdaterPlugin extends Plugin {
       method: "GET",
       headers: {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "Updater-Plugin"
+        "User-Agent": "Updater-Plugin",
+        "Cache-Control": "no-cache, no-store",
+        "Pragma": "no-cache"
       }
     });
     if (r.status < 200 || r.status >= 300) throw new Error(`GitHub API HTTP ${r.status}`);
@@ -510,6 +520,14 @@ module.exports = class UpdaterPlugin extends Plugin {
     try {
       const discovered = await this.resolveRegistryPlugins();
       const plugins = discovered.installed;
+
+      for (const p of plugins) {
+        const cachedVersion = this.app.plugins?.manifests?.[p.local.id]?.version;
+        if (cachedVersion !== p.local.version) {
+          await this.safeRefreshPluginManifestCache(p.local.id, p.local.manifest);
+        }
+      }
+
       const updates = plugins.filter(p =>
         compareVersions(p.entry.version, p.local.version) > 0
       );
@@ -626,6 +644,12 @@ module.exports = class UpdaterPlugin extends Plugin {
 
     const remoteManifest = JSON.parse(remoteManifestText);
 
+    try {
+      new Function(mainJs);
+    } catch (e) {
+      throw new Error(`${entry.name || entry.id}: удалённый main.js повреждён — ${e.message}`);
+    }
+
     if (remoteManifest.id !== entry.id) {
       throw new Error(`ID не совпадает: registry=${entry.id}, manifest=${remoteManifest.id}`);
     }
@@ -652,6 +676,13 @@ module.exports = class UpdaterPlugin extends Plugin {
   try {
     const discovered = await this.resolveRegistryPlugins();
     const plugins = discovered.installed;
+
+    for (const p of plugins) {
+      const cachedVersion = this.app.plugins?.manifests?.[p.local.id]?.version;
+      if (cachedVersion !== p.local.version) {
+        await this.safeRefreshPluginManifestCache(p.local.id, p.local.manifest);
+      }
+    }
 
     if (!plugins.length) {
       new Notice(`В репозитории найдено: ${discovered.all.length}; локально установлено: 0.`);
@@ -780,6 +811,7 @@ async installSelfUpdate(info) {
     new Notice(`Самообновление Updater Plugin не удалось: ${e.message}`, 10000);
     return false;
   }
+}
 
   async safeRefreshPluginManifestCache(pluginId, manifest) {
     try {
