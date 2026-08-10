@@ -1,0 +1,9 @@
+{
+  "id": "line-clone-sync",
+  "name": "Line Clone Sync",
+  "version": "1.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Синхронизирует изменения связанных строк и переносит строки по названию заметки.",
+  "author": "volnexx",
+  "isDesktopOnly": false
+}
