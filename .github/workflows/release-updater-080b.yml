@@ -1,0 +1,36 @@
+name: Release Updater 0.8.0b
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Release Updater 0.8.0 robust matcher'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - name: Patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          p=Path('updater-plugin/main.js')
+          s=p.read_text()
+          if 'folderName: e.name' not in s:
+            s=s.replace('            dir: path.join(root, e.name),\n','            dir: path.join(root, e.name),\n            folderName: e.name,\n',1)
+          a=s.index('  async resolveRegistryPlugins() {')
+          b=s.index('  async checkOnly() {',a)
+          block='''  normalizePluginIdentity(v) {\n    return String(v || "").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9а-яё]+/giu, "");\n  }\n\n  matchRemoteToLocal(entry, installed) {\n    const exact=installed.get(entry.id);\n    if (exact) return {local: exact, matchedBy: "id", ambiguous: false};\n    const locals=Array.from(installed.values());\n    const rf=this.normalizePluginIdentity(String(entry.path||"").split("/").filter(Boolean).pop());\n    if (rf) { const m=locals.filter(x=>this.normalizePluginIdentity(x.folderName)===rf); if(m.length===1)return {local:m[0],matchedBy:"folder",ambiguous:false}; if(m.length>1)return {local:null,matchedBy:"folder",ambiguous:true}; }\n    const rn=this.normalizePluginIdentity(entry.name||entry.manifest?.name);\n    if (rn) { const m=locals.filter(x=>this.normalizePluginIdentity(x.name||x.manifest?.name)===rn); if(m.length===1)return {local:m[0],matchedBy:"name",ambiguous:false}; if(m.length>1)return {local:null,matchedBy:"name",ambiguous:true}; }\n    return {local:null,matchedBy:"none",ambiguous:false};\n  }\n\n  async resolveRegistryPlugins() {\n    const [remote,installed]=await Promise.all([this.listRepositoryPluginFolders(),this.readInstalledPlugins()]);\n    const all=remote.map(entry=>{const m=this.matchRemoteToLocal(entry,installed);return {entry,local:m.local,matchedBy:m.matchedBy,ambiguous:m.ambiguous};});\n    return {all,installed:all.filter(x=>x.local&&!x.ambiguous),ambiguous:all.filter(x=>x.ambiguous)};\n  }\n\n'''
+          s=s[:a]+block+s[b:]
+          s=s.replace('const plugins = discovered.installed;\n      const updates = plugins.filter(p => compareVersions(p.entry.version, p.local.version) > 0);','const plugins = discovered.installed;\n      const migrated = plugins.filter(p => p.matchedBy !== "id");\n      if (migrated.length) new Notice(`Сопоставлены после переименования: ${migrated.map(p => p.local.name).join("; ")}`, 8000);\n      if (discovered.ambiguous?.length) new Notice(`Неоднозначных совпадений: ${discovered.ambiguous.length}; пропущены.`, 8000);\n      const updates = plugins.filter(p => compareVersions(p.entry.version, p.local.version) > 0);')
+          p.write_text(s)
+          mp=Path('updater-plugin/manifest.json'); m=json.loads(mp.read_text()); m['version']='0.8.0'; mp.write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n')
+      - run: node --check updater-plugin/main.js
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add updater-plugin/main.js updater-plugin/manifest.json
+          git commit -m 'Release Updater Plugin 0.8.0'
+          git push origin HEAD:centralize-plugins
