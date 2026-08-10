@@ -745,7 +745,7 @@ async installSelfUpdate(info) {
       if (await exists(css)) await fsp.rm(css, { force: true });
     }
 
-    await this.refreshPluginManifestCache(pluginId, remoteManifest);
+    await this.safeRefreshPluginManifestCache(pluginId, remoteManifest);
 
     new Notice(`Updater Plugin: ${local.version} → ${remoteManifest.version}. Перезапускаю себя…`);
 
@@ -772,7 +772,7 @@ async installSelfUpdate(info) {
         if (await exists(old)) await fsp.copyFile(old, cur);
         else if (await exists(cur)) await fsp.rm(cur, { force: true });
       }
-      await this.refreshPluginManifestCache(pluginId, local.manifest);
+      await this.safeRefreshPluginManifestCache(pluginId, local.manifest);
     } catch (rollbackError) {
       console.error("[Updater Plugin] self rollback failed:", rollbackError);
     }
@@ -780,7 +780,16 @@ async installSelfUpdate(info) {
     new Notice(`Самообновление Updater Plugin не удалось: ${e.message}`, 10000);
     return false;
   }
-}
+
+  async safeRefreshPluginManifestCache(pluginId, manifest) {
+    try {
+      if (typeof this.refreshPluginManifestCache === "function") {
+        await this.refreshPluginManifestCache(pluginId, manifest);
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] non-fatal manifest cache refresh error:", e);
+    }
+  }
 
   async refreshPluginManifestCache(pluginId, manifest) {
     const api = this.app.plugins;
@@ -862,7 +871,7 @@ async installSelfUpdate(info) {
         }
 
         try {
-        await this.refreshPluginManifestCache(pluginId, remoteManifest);
+        await this.safeRefreshPluginManifestCache(pluginId, remoteManifest);
       } catch (cacheError) {
         console.warn("[Updater Plugin] self-update cache refresh skipped:", cacheError);
       }
@@ -883,7 +892,7 @@ async installSelfUpdate(info) {
         }));
 
         try {
-          await this.refreshPluginManifestCache(pluginId, local.manifest);
+          await this.safeRefreshPluginManifestCache(pluginId, local.manifest);
         } catch (cacheError) {
           console.warn("[Updater Plugin] rollback cache refresh skipped:", cacheError);
         }

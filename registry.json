@@ -22,7 +22,7 @@
     {
       "id": "updater-plugin",
       "name": "Updater Plugin",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "path": "updater-plugin"
     }
   ]
