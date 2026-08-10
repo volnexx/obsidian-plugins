@@ -1,0 +1,89 @@
+name: Patch Updater 0.8.1b
+on:
+  push:
+    paths: ['.github/workflows/patch-updater-081b.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - name: Patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import json,re
+          p=Path('updater-plugin/main.js'); s=p.read_text(encoding='utf-8')
+          s=s.replace('dir: path.join(root, e.name),\n            manifest: m','dir: path.join(root, e.name),\n            folderName: e.name,\n            manifest: m')
+          new='''  normalizePluginIdentity(value) {
+            return String(value || "").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9а-яё]+/giu, "");
+          }
+
+          matchRemoteToLocal(entry, installed) {
+            const exact=installed.get(entry.id);
+            if (exact) return {local:exact,matchedBy:"id",ambiguous:false};
+            const locals=Array.from(installed.values());
+            const remoteFolder=this.normalizePluginIdentity(String(entry.path||"").split("/").filter(Boolean).pop());
+            if (remoteFolder) {
+              const m=locals.filter(x=>this.normalizePluginIdentity(x.folderName)===remoteFolder);
+              if (m.length===1) return {local:m[0],matchedBy:"folder",ambiguous:false};
+              if (m.length>1) return {local:null,matchedBy:"folder",ambiguous:true};
+            }
+            const remoteName=this.normalizePluginIdentity(entry.name||entry.manifest?.name);
+            if (remoteName) {
+              const m=locals.filter(x=>this.normalizePluginIdentity(x.name||x.manifest?.name)===remoteName);
+              if (m.length===1) return {local:m[0],matchedBy:"name",ambiguous:false};
+              if (m.length>1) return {local:null,matchedBy:"name",ambiguous:true};
+            }
+            return {local:null,matchedBy:"none",ambiguous:false};
+          }
+
+          async resolveRegistryPlugins() {
+            const [remotePlugins,installed]=await Promise.all([this.listRepositoryPluginFolders(),this.readInstalledPlugins()]);
+            const all=remotePlugins.map(entry=>{const m=this.matchRemoteToLocal(entry,installed);return {entry,local:m.local,matchedBy:m.matchedBy,ambiguous:m.ambiguous};});
+            return {all,installed:all.filter(p=>p.local&&!p.ambiguous),ambiguous:all.filter(p=>p.ambiguous)};
+          }
+
+'''
+          s,n=re.subn(r'  async resolveRegistryPlugins\(\) \{.*?\n  \}\n\n(?=  async checkOnly\(\))',new,s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('resolve replace failed')
+          marker='const plugins = discovered.installed;'
+          inject='''const plugins = discovered.installed;
+              const migrated=plugins.filter(p=>p.matchedBy!=="id");
+              if(migrated.length)new Notice(`Сопоставлены после переименования: ${migrated.map(p=>`${p.local.name} (${p.matchedBy})`).join("; ")}`,8000);
+              if(discovered.ambiguous?.length)new Notice(`Неоднозначных совпадений: ${discovered.ambiguous.length}. Они пропущены.`,8000);'''
+          s=s.replace(marker,inject,2)
+          # ID migration inside normal plugin install only
+          pos=s.find('  async installPreparedPlugin(info) {')
+          if pos<0: raise SystemExit('install method missing')
+          a=s[:pos]; b=s[pos:]
+          b=b.replace('const api = this.app.plugins;\n      const wasEnabled = !!api?.enabledPlugins?.has(pluginId);','const api = this.app.plugins;\n      const oldPluginId = pluginId;\n      const newPluginId = remoteManifest.id || oldPluginId;\n      const idChanged = newPluginId !== oldPluginId;\n      const wasEnabled = !!api?.enabledPlugins?.has(oldPluginId);',1)
+          b=b.replace('await api.disablePlugin(pluginId);','await api.disablePlugin(oldPluginId);',1)
+          b=b.replace('await this.safeRefreshPluginManifestCache(pluginId, remoteManifest);','await this.safeRefreshPluginManifestCache(newPluginId, remoteManifest);',1)
+          b=b.replace('''if (wasEnabled && api?.enablePlugin) {
+          await api.enablePlugin(pluginId);
+        }''','''if (wasEnabled) {
+          if (idChanged && typeof api?.enablePluginAndSave === "function") await api.enablePluginAndSave(newPluginId);
+          else if (api?.enablePlugin) await api.enablePlugin(newPluginId);
+        }''',1)
+          b=b.replace('new Notice(`${local.name}: ${local.version} → ${remoteManifest.version}`);','const migrationSuffix=idChanged?`; id: ${oldPluginId} → ${newPluginId}`:"";\n        new Notice(`${local.name}: ${local.version} → ${remoteManifest.version}${migrationSuffix}`);',1)
+          b=b.replace('await this.safeRefreshPluginManifestCache(pluginId, local.manifest);','await this.safeRefreshPluginManifestCache(oldPluginId, local.manifest);',1)
+          s=a+b
+          p.write_text(s,encoding='utf-8')
+          mp=Path('updater-plugin/manifest.json'); m=json.loads(mp.read_text()); m['version']='0.8.1'; m['description']='Auto-discovers central-repo plugins and safely matches renamed IDs, folders and names, with backup and rollback.'; mp.write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n')
+          rp=Path('registry.json'); r=json.loads(rp.read_text());
+          for x in r.get('plugins',[]):
+            if x.get('id')=='updater-plugin': x['version']='0.8.1'
+          rp.write_text(json.dumps(r,ensure_ascii=False,indent=2)+'\n')
+      - name: Validate
+        run: node --check updater-plugin/main.js
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updater-plugin/main.js updater-plugin/manifest.json registry.json
+          git commit -m "Release Updater Plugin 0.8.1" || exit 0
+          git push origin HEAD:centralize-plugins
