@@ -495,6 +495,45 @@ module.exports = class UpdaterPlugin extends Plugin {
     }
   }
 
+
+  async refreshPluginManifestCache(pluginId, manifest) {
+    const api = this.app.plugins;
+
+    try {
+      if (typeof api?.loadManifests === "function") {
+        await api.loadManifests();
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] loadManifests failed:", e);
+    }
+
+    try {
+      if (api?.manifests) {
+        api.manifests[pluginId] = manifest;
+      }
+
+      const loaded = api?.plugins?.[pluginId];
+      if (loaded && manifest) {
+        loaded.manifest = manifest;
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] manifest cache refresh failed:", e);
+    }
+
+    try {
+      const setting = this.app.setting;
+      const activeTab = setting?.activeTab;
+      if (activeTab && typeof activeTab.display === "function") {
+        const id = String(activeTab.id || activeTab.constructor?.name || "").toLowerCase();
+        if (id.includes("community") || id.includes("plugin")) {
+          activeTab.display();
+        }
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] settings UI refresh failed:", e);
+    }
+  }
+
   async installPreparedPlugin(info) {
     const { entry, local, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
     const pluginId = local.id;
@@ -544,6 +583,8 @@ module.exports = class UpdaterPlugin extends Plugin {
           if (await exists(css)) await fsp.rm(css, { force: true });
         }
 
+        await this.refreshPluginManifestCache(pluginId, remoteManifest);
+
         if (wasEnabled && api?.enablePlugin) {
           await api.enablePlugin(pluginId);
         }
@@ -558,6 +599,8 @@ module.exports = class UpdaterPlugin extends Plugin {
           if (await exists(old)) await fsp.copyFile(old, cur);
           else if (await exists(cur)) await fsp.rm(cur, { force: true });
         }));
+
+        await this.refreshPluginManifestCache(pluginId, local.manifest);
 
         if (wasEnabled && api?.enablePlugin) {
           try { await api.enablePlugin(pluginId); } catch {}
