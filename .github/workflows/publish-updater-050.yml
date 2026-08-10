@@ -1,0 +1,204 @@
+name: Publish Updater Plugin 0.5.0
+
+on:
+  push:
+    branches: [centralize-plugins]
+    paths:
+      - '.github/workflows/publish-updater-050.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+
+      - name: Patch updater to support self-update
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+
+          p = Path('updater-plugin/main.js')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace('''      if (entry.id === this.manifest.id) continue;\n\n      const local = installed.get(entry.id);''', '''      const local = installed.get(entry.id);''')
+
+          start = s.index('  async safeUpdateAll() {')
+          end = s.index('  async installPreparedPlugin(info) {', start)
+
+          block = r'''  async safeUpdateAll() {
+            if (this._busy) {
+              new Notice("Обновление уже выполняется.");
+              return;
+            }
+
+            this._busy = true;
+            const started = Date.now();
+
+            try {
+              const plugins = await this.resolveRegistryPlugins();
+
+              if (!plugins.length) {
+                new Notice("Ни один установленный наш плагин не найден в центральном реестре.");
+                return;
+              }
+
+              const updates = plugins.filter(p =>
+                compareVersions(p.entry.version, p.local.version) > 0
+              );
+
+              if (!updates.length) {
+                new Notice(`Проверено ${plugins.length}. Обновлений нет.`);
+                return;
+              }
+
+              new Notice(`Найдено обновлений: ${updates.length}. Загружаю файлы…`);
+
+              const preparedResults = await Promise.all(
+                updates.map(p =>
+                  this.prepareUpdate(p)
+                    .then(value => ({ ok: true, value }))
+                    .catch(error => ({ ok: false, plugin: p, error }))
+                )
+              );
+
+              const failedDownloads = preparedResults.filter(x => !x.ok);
+              for (const f of failedDownloads) {
+                new Notice(`${f.plugin.local.name}: ошибка загрузки — ${f.error.message}`, 8000);
+              }
+
+              const prepared = preparedResults.filter(x => x.ok).map(x => x.value);
+              if (!prepared.length) {
+                new Notice("Ни одно обновление не удалось подготовить.");
+                return;
+              }
+
+              const backup = await this.createVaultBackup();
+              if (!backup) return;
+
+              const normalUpdates = prepared.filter(p => p.local.id !== this.manifest.id);
+              const selfUpdate = prepared.find(p => p.local.id === this.manifest.id) || null;
+
+              let updated = 0;
+              let failed = failedDownloads.length;
+
+              for (const info of normalUpdates) {
+                if (await this.installPreparedPlugin(info)) updated++;
+                else failed++;
+              }
+
+              if (selfUpdate) {
+                if (await this.installSelfUpdate(selfUpdate)) updated++;
+                else failed++;
+              }
+
+              new Notice(
+                `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с. Обновлено: ${updated}; ошибок: ${failed}.`,
+                10000
+              );
+            } catch (e) {
+              console.error("[Updater Plugin]", e);
+              new Notice(`Ошибка обновления: ${e.message}`, 10000);
+            } finally {
+              this._busy = false;
+            }
+          }
+
+          async installSelfUpdate(info) {
+            const { local, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
+            const pluginId = this.manifest.id;
+            const pluginDir = local.dir;
+            const rollback = path.join(pluginDir, "self-rollback", `${local.version}_${stamp()}`);
+
+            try {
+              await fsp.mkdir(rollback, { recursive: true });
+
+              await Promise.all(["main.js", "manifest.json", "styles.css"].map(async name => {
+                const src = path.join(pluginDir, name);
+                if (await exists(src)) await fsp.copyFile(src, path.join(rollback, name));
+              }));
+
+              const writes = [
+                fsp.writeFile(path.join(pluginDir, "main.js"), mainJs, "utf8"),
+                fsp.writeFile(path.join(pluginDir, "manifest.json"), remoteManifestText, "utf8")
+              ];
+              if (hasStyles) writes.push(fsp.writeFile(path.join(pluginDir, "styles.css"), stylesCss, "utf8"));
+              await Promise.all(writes);
+
+              if (!hasStyles) {
+                const css = path.join(pluginDir, "styles.css");
+                if (await exists(css)) await fsp.rm(css, { force: true });
+              }
+
+              await this.refreshPluginManifestCache(pluginId, remoteManifest);
+
+              new Notice(`Updater Plugin: ${local.version} → ${remoteManifest.version}. Перезапускаю себя…`);
+
+              const api = this.app.plugins;
+              setTimeout(async () => {
+                try {
+                  if (api?.disablePlugin) await api.disablePlugin(pluginId);
+                  if (api?.enablePlugin) await api.enablePlugin(pluginId);
+                  new Notice(`Updater Plugin ${remoteManifest.version} запущен.`);
+                } catch (restartError) {
+                  console.error("[Updater Plugin] self restart failed:", restartError);
+                  new Notice(`Updater Plugin обновлён до ${remoteManifest.version}, но автоматический перезапуск не удался. Перезапусти Obsidian один раз.`, 12000);
+                }
+              }, 150);
+
+              return true;
+            } catch (e) {
+              console.error("[Updater Plugin] self-update failed:", e);
+
+              try {
+                for (const name of ["main.js", "manifest.json", "styles.css"]) {
+                  const old = path.join(rollback, name);
+                  const cur = path.join(pluginDir, name);
+                  if (await exists(old)) await fsp.copyFile(old, cur);
+                  else if (await exists(cur)) await fsp.rm(cur, { force: true });
+                }
+                await this.refreshPluginManifestCache(pluginId, local.manifest);
+              } catch (rollbackError) {
+                console.error("[Updater Plugin] self rollback failed:", rollbackError);
+              }
+
+              new Notice(`Самообновление Updater Plugin не удалось: ${e.message}`, 10000);
+              return false;
+            }
+          }
+
+          '''
+
+          s = s[:start] + block + s[end:]
+          p.write_text(s, encoding='utf-8')
+
+          mp = Path('updater-plugin/manifest.json')
+          m = json.loads(mp.read_text(encoding='utf-8'))
+          m['version'] = '0.5.0'
+          m['description'] = 'One-button updater for a central Obsidian plugin registry with full vault backup, rollback and self-update.'
+          mp.write_text(json.dumps(m, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          rp = Path('registry.json')
+          reg = json.loads(rp.read_text(encoding='utf-8'))
+          for item in reg['plugins']:
+            if item.get('id') == 'updater-plugin':
+              item['version'] = '0.5.0'
+              item['path'] = 'updater-plugin'
+              break
+          else:
+            reg['plugins'].append({'id':'updater-plugin','name':'Updater Plugin','version':'0.5.0','path':'updater-plugin'})
+          rp.write_text(json.dumps(reg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+      - name: Commit published updater
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updater-plugin/main.js updater-plugin/manifest.json registry.json
+          git commit -m "Release Updater Plugin 0.5.0" || exit 0
+          git push origin HEAD:centralize-plugins
