@@ -1,9 +1,9 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "minAppVersion": "1.5.0",
-  "description": "One-button updater with central registry, full vault backup, rollback/redo controls and safe self-update.",
+  "description": "One-button updater with central registry, vault rollback/redo and reliable self-update.",
   "author": "volnexx",
   "isDesktopOnly": true
 }

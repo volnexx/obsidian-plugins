@@ -794,6 +794,36 @@ async installSelfUpdate(info) {
   }
 }
 
+  async refreshPluginManifestCache(pluginId, manifest) {
+    const api = this.app.plugins;
+
+    try {
+      if (typeof api?.loadManifests === "function") {
+        await api.loadManifests();
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] loadManifests failed:", e);
+    }
+
+    try {
+      if (api?.manifests) api.manifests[pluginId] = manifest;
+      const loaded = api?.plugins?.[pluginId];
+      if (loaded && manifest) loaded.manifest = manifest;
+    } catch (e) {
+      console.warn("[Updater Plugin] manifest cache refresh failed:", e);
+    }
+
+    try {
+      const activeTab = this.app.setting?.activeTab;
+      if (activeTab && typeof activeTab.display === "function") {
+        const id = String(activeTab.id || activeTab.constructor?.name || "").toLowerCase();
+        if (id.includes("community") || id.includes("plugin")) activeTab.display();
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] settings UI refresh failed:", e);
+    }
+  }
+
   async installPreparedPlugin(info) {
     const { entry, local, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
     const pluginId = local.id;
@@ -843,7 +873,11 @@ async installSelfUpdate(info) {
           if (await exists(css)) await fsp.rm(css, { force: true });
         }
 
+        try {
         await this.refreshPluginManifestCache(pluginId, remoteManifest);
+      } catch (cacheError) {
+        console.warn("[Updater Plugin] self-update cache refresh skipped:", cacheError);
+      }
 
         if (wasEnabled && api?.enablePlugin) {
           await api.enablePlugin(pluginId);
@@ -860,7 +894,11 @@ async installSelfUpdate(info) {
           else if (await exists(cur)) await fsp.rm(cur, { force: true });
         }));
 
-        await this.refreshPluginManifestCache(pluginId, local.manifest);
+        try {
+          await this.refreshPluginManifestCache(pluginId, local.manifest);
+        } catch (cacheError) {
+          console.warn("[Updater Plugin] rollback cache refresh skipped:", cacheError);
+        }
 
         if (wasEnabled && api?.enablePlugin) {
           try { await api.enablePlugin(pluginId); } catch {}
