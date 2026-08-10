@@ -1,9 +1,9 @@
 {
   "id": "style-settings-color-cycle",
   "name": "Style Settings — 8 тем",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "minAppVersion": "1.5.0",
-  "description": "Плавно переключает 8 заданных палитр Minimal: длительное удержание темы и короткий переход между соседними темами.",
+  "description": "Плавно переходит между восемью встроенными темами Minimal; темы можно заменить одним JSON-массивом.",
   "author": "custom",
   "isDesktopOnly": false
 }
