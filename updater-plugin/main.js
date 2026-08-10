@@ -275,8 +275,16 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async rawText(repo, branch, file) {
-    const url = `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/${file}`;
-    const r = await requestUrl({ url, method: "GET" });
+    const cacheBust = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const url = `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/${file}?updater=${cacheBust}`;
+    const r = await requestUrl({
+      url,
+      method: "GET",
+      headers: {
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        "Pragma": "no-cache"
+      }
+    });
     if (r.status < 200 || r.status >= 300) {
       throw new Error(`${repo}/${file}: HTTP ${r.status}`);
     }
