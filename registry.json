@@ -20,6 +20,12 @@
       "path": "resource-monitor"
     },
     {
+      "id": "style-settings-color-cycle",
+      "name": "Style Settings — 8 тем",
+      "version": "2.1.0",
+      "path": "style-settings-plugin"
+    },
+    {
       "id": "updater-plugin",
       "name": "Updater Plugin",
       "version": "0.7.1",
