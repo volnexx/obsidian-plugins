@@ -212,6 +212,59 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   min-width: 72px;
 }
 
+.tir-urgent-toggle.tir-multi-pin-toggle {
+  display: inline-flex;
+  flex-basis: 58px;
+  min-width: 58px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.tir-multi-pin-icon {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 28px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.tir-multi-pin-part {
+  position: absolute;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.tir-multi-pin-part-1 {
+  top: 0;
+  left: 0;
+}
+
+.tir-multi-pin-part-2 {
+  top: 5px;
+  left: 10px;
+}
+
+.tir-multi-pin-part-3 {
+  top: 10px;
+  left: 20px;
+}
+
+.tir-multi-pin-part svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
+
+.tir-multi-pin-toggle:hover .tir-multi-pin-icon,
+.tir-multi-pin-toggle:focus-visible .tir-multi-pin-icon {
+  color: var(--text-normal);
+}
+
 .tir-pin-toggle {
   appearance: none;
   display: inline-flex;
@@ -346,6 +399,14 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   padding-inline: 12px;
   font-size: var(--font-ui-small);
   line-height: 1.2;
+}
+
+.tir-review-urgent-toggle.tir-multi-pin-toggle {
+  display: inline-flex;
+  min-width: 58px;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
 }
 
 .tir-flashcard {
