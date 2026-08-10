@@ -1,0 +1,9 @@
+{
+  "id": "style-settings-color-cycle",
+  "name": "Style Settings — 8 тем",
+  "version": "2.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Держит восемь готовых тем и быстро плавно переходит между ними. Работает автономно.",
+  "author": "custom",
+  "isDesktopOnly": false
+}
