@@ -1,9 +1,9 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "minAppVersion": "1.5.0",
-  "description": "Stable updater build: auto-discovers plugin folders in the central repository, with safe self-update and backup.",
+  "description": "Надёжное обновление самописных плагинов без устаревшего кэша, с проверкой файлов и резервной копией.",
   "author": "volnexx",
   "isDesktopOnly": true
 }
