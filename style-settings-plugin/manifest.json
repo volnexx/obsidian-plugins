@@ -1,9 +1,9 @@
 {
   "id": "style-settings-color-cycle",
   "name": "Style Settings — 8 тем",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "minAppVersion": "1.5.0",
-  "description": "Плавно переходит между восемью встроенными темами Minimal, запоминает текущую позицию цикла между перезапусками Obsidian.",
+  "description": "Плавно переходит между восемью встроенными темами Minimal, запоминает текущую позицию цикла между перезапусками Obsidian. Автономная сборка без внешних JS-зависимостей.",
   "author": "custom",
   "isDesktopOnly": false
 }
