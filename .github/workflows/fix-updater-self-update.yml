@@ -6,6 +6,7 @@ on:
       - centralize-plugins
     paths:
       - .github/workflows/fix-updater-self-update.yml
+      - .github/scripts/fix_updater_self_update.py
 
 permissions:
   contents: write
@@ -19,84 +20,13 @@ jobs:
           ref: centralize-plugins
 
       - name: Patch updater
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import json
-
-          p = Path('updater-plugin/main.js')
-          s = p.read_text()
-
-          if 'async refreshPluginManifestCache' not in s:
-              marker = '  async installPreparedPlugin(info) {'
-              method = '''  async refreshPluginManifestCache(pluginId, manifest) {
-            const api = this.app.plugins;
-
-            try {
-              if (typeof api?.loadManifests === "function") {
-                await api.loadManifests();
-              }
-            } catch (e) {
-              console.warn("[Updater Plugin] loadManifests failed:", e);
-            }
-
-            try {
-              if (api?.manifests) api.manifests[pluginId] = manifest;
-              const loaded = api?.plugins?.[pluginId];
-              if (loaded && manifest) loaded.manifest = manifest;
-            } catch (e) {
-              console.warn("[Updater Plugin] manifest cache refresh failed:", e);
-            }
-
-            try {
-              const activeTab = this.app.setting?.activeTab;
-              if (activeTab && typeof activeTab.display === "function") {
-                const id = String(activeTab.id || activeTab.constructor?.name || "").toLowerCase();
-                if (id.includes("community") || id.includes("plugin")) activeTab.display();
-              }
-            } catch (e) {
-              console.warn("[Updater Plugin] settings UI refresh failed:", e);
-            }
-          }
-
-'''
-              if marker not in s:
-                  raise SystemExit('installPreparedPlugin marker not found')
-              s = s.replace(marker, method + marker, 1)
-
-          s = s.replace(
-              '      await this.refreshPluginManifestCache(pluginId, remoteManifest);',
-              '      try {\n        await this.refreshPluginManifestCache(pluginId, remoteManifest);\n      } catch (cacheError) {\n        console.warn("[Updater Plugin] self-update cache refresh skipped:", cacheError);\n      }',
-              1
-          )
-          s = s.replace(
-              '        await this.refreshPluginManifestCache(pluginId, local.manifest);',
-              '        try {\n          await this.refreshPluginManifestCache(pluginId, local.manifest);\n        } catch (cacheError) {\n          console.warn("[Updater Plugin] rollback cache refresh skipped:", cacheError);\n        }',
-              1
-          )
-          p.write_text(s)
-
-          mp = Path('updater-plugin/manifest.json')
-          m = json.loads(mp.read_text())
-          m['version'] = '0.6.1'
-          m['description'] = 'One-button updater with central registry, vault rollback/redo and reliable self-update.'
-          mp.write_text(json.dumps(m, ensure_ascii=False, indent=2) + '\n')
-
-          rp = Path('registry.json')
-          r = json.loads(rp.read_text())
-          for item in r.get('plugins', []):
-              if item.get('id') == 'updater-plugin':
-                  item['version'] = '0.6.1'
-                  break
-          rp.write_text(json.dumps(r, ensure_ascii=False, indent=2) + '\n')
-          PY
+        run: python .github/scripts/fix_updater_self_update.py
 
       - name: Commit fix
-        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updater-plugin/main.js updater-plugin/manifest.json registry.json
+          git diff --cached --quiet && exit 0
           git commit -m "Fix Updater Plugin self-update 0.6.1"
           git push origin HEAD:centralize-plugins
