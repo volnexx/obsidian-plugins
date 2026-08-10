@@ -355,6 +355,16 @@ module.exports = class UpdaterPlugin extends Plugin {
       .replace(/[^a-z0-9а-яё]+/giu, "");
   }
 
+  pluginNameTokens(value) {
+    const stop = new Set(["obsidian", "plugin", "plugins", "плагин", "плагины"]);
+    const words = String(value || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .match(/[a-z0-9а-яё]+/giu) || [];
+    return new Set(words.filter(word => word.length >= 2 && !stop.has(word)));
+  }
+
   matchRemoteToLocal(entry, installed) {
     const exact = installed.get(entry.id);
     if (exact) return { local: exact, matchedBy: "id", ambiguous: false };
@@ -389,6 +399,33 @@ module.exports = class UpdaterPlugin extends Plugin {
       }
       if (nameMatches.length > 1) {
         return { local: null, matchedBy: "name", ambiguous: true };
+      }
+    }
+
+    // Legacy fallback for renamed custom plugins.
+    // Require the same non-empty author plus a strong token overlap in the name.
+    // This avoids matching our custom plugin to an unrelated/community plugin with a similar title.
+    const remoteAuthor = this.normalizePluginIdentity(entry.manifest?.author);
+    const remoteTokens = this.pluginNameTokens(entry.name || entry.manifest?.name);
+
+    if (remoteAuthor && remoteTokens.size) {
+      const legacyMatches = locals.filter(local => {
+        const localAuthor = this.normalizePluginIdentity(local.manifest?.author);
+        if (!localAuthor || localAuthor !== remoteAuthor) return false;
+
+        const localTokens = this.pluginNameTokens(local.name || local.manifest?.name);
+        if (!localTokens.size) return false;
+
+        const shared = [...remoteTokens].filter(token => localTokens.has(token));
+        const coverage = shared.length / Math.min(remoteTokens.size, localTokens.size);
+        return shared.length >= 2 && coverage >= 0.5;
+      });
+
+      if (legacyMatches.length === 1) {
+        return { local: legacyMatches[0], matchedBy: "author+name", ambiguous: false };
+      }
+      if (legacyMatches.length > 1) {
+        return { local: null, matchedBy: "author+name", ambiguous: true };
       }
     }
 
