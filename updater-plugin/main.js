@@ -261,8 +261,6 @@ module.exports = class UpdaterPlugin extends Plugin {
 
     for (const entry of registry.plugins) {
       if (!entry?.id || !entry?.version) continue;
-      if (entry.id === this.manifest.id) continue;
-
       const local = installed.get(entry.id);
       if (!local) continue;
 
@@ -423,116 +421,145 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async safeUpdateAll() {
-    if (this._busy) {
-      new Notice("Обновление уже выполняется.");
+  if (this._busy) {
+    new Notice("Обновление уже выполняется.");
+    return;
+  }
+
+  this._busy = true;
+  const started = Date.now();
+
+  try {
+    const plugins = await this.resolveRegistryPlugins();
+
+    if (!plugins.length) {
+      new Notice("Ни один установленный наш плагин не найден в центральном реестре.");
       return;
     }
 
-    this._busy = true;
-    const started = Date.now();
+    const updates = plugins.filter(p =>
+      compareVersions(p.entry.version, p.local.version) > 0
+    );
 
-    try {
-      const plugins = await this.resolveRegistryPlugins();
-
-      if (!plugins.length) {
-        new Notice("Ни один установленный наш плагин не найден в центральном реестре.");
-        return;
-      }
-
-      const updates = plugins.filter(p =>
-        compareVersions(p.entry.version, p.local.version) > 0
-      );
-
-      if (!updates.length) {
-        new Notice(`Проверено ${plugins.length}. Обновлений нет.`);
-        return;
-      }
-
-      new Notice(`Найдено обновлений: ${updates.length}. Загружаю файлы…`);
-
-      const preparedResults = await Promise.all(
-        updates.map(p =>
-          this.prepareUpdate(p)
-            .then(value => ({ ok: true, value }))
-            .catch(error => ({ ok: false, plugin: p, error }))
-        )
-      );
-
-      const failedDownloads = preparedResults.filter(x => !x.ok);
-      if (failedDownloads.length) {
-        for (const f of failedDownloads) {
-          new Notice(`${f.plugin.local.name}: ошибка загрузки — ${f.error.message}`, 8000);
-        }
-      }
-
-      const prepared = preparedResults.filter(x => x.ok).map(x => x.value);
-
-      if (!prepared.length) {
-        new Notice("Ни одно обновление не удалось подготовить.");
-        return;
-      }
-
-      const backup = await this.createVaultBackup();
-      if (!backup) return;
-
-      let updated = 0;
-      let failed = failedDownloads.length;
-
-      for (const info of prepared) {
-        if (await this.installPreparedPlugin(info)) updated++;
-        else failed++;
-      }
-
-      new Notice(
-        `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с. Обновлено: ${updated}; ошибок: ${failed}.`,
-        10000
-      );
-    } catch (e) {
-      console.error("[Updater Plugin]", e);
-      new Notice(`Ошибка обновления: ${e.message}`, 10000);
-    } finally {
-      this._busy = false;
+    if (!updates.length) {
+      new Notice(`Проверено ${plugins.length}. Обновлений нет.`);
+      return;
     }
+
+    new Notice(`Найдено обновлений: ${updates.length}. Загружаю файлы…`);
+
+    const preparedResults = await Promise.all(
+      updates.map(p =>
+        this.prepareUpdate(p)
+          .then(value => ({ ok: true, value }))
+          .catch(error => ({ ok: false, plugin: p, error }))
+      )
+    );
+
+    const failedDownloads = preparedResults.filter(x => !x.ok);
+    for (const f of failedDownloads) {
+      new Notice(`${f.plugin.local.name}: ошибка загрузки — ${f.error.message}`, 8000);
+    }
+
+    const prepared = preparedResults.filter(x => x.ok).map(x => x.value);
+    if (!prepared.length) {
+      new Notice("Ни одно обновление не удалось подготовить.");
+      return;
+    }
+
+    const backup = await this.createVaultBackup();
+    if (!backup) return;
+
+    const normalUpdates = prepared.filter(p => p.local.id !== this.manifest.id);
+    const selfUpdate = prepared.find(p => p.local.id === this.manifest.id) || null;
+
+    let updated = 0;
+    let failed = failedDownloads.length;
+
+    for (const info of normalUpdates) {
+      if (await this.installPreparedPlugin(info)) updated++;
+      else failed++;
+    }
+
+    if (selfUpdate) {
+      if (await this.installSelfUpdate(selfUpdate)) updated++;
+      else failed++;
+    }
+
+    new Notice(
+      `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с. Обновлено: ${updated}; ошибок: ${failed}.`,
+      10000
+    );
+  } catch (e) {
+    console.error("[Updater Plugin]", e);
+    new Notice(`Ошибка обновления: ${e.message}`, 10000);
+  } finally {
+    this._busy = false;
   }
+}
 
+async installSelfUpdate(info) {
+  const { local, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
+  const pluginId = this.manifest.id;
+  const pluginDir = local.dir;
+  const rollback = path.join(pluginDir, "self-rollback", `${local.version}_${stamp()}`);
 
-  async refreshPluginManifestCache(pluginId, manifest) {
+  try {
+    await fsp.mkdir(rollback, { recursive: true });
+
+    await Promise.all(["main.js", "manifest.json", "styles.css"].map(async name => {
+      const src = path.join(pluginDir, name);
+      if (await exists(src)) await fsp.copyFile(src, path.join(rollback, name));
+    }));
+
+    const writes = [
+      fsp.writeFile(path.join(pluginDir, "main.js"), mainJs, "utf8"),
+      fsp.writeFile(path.join(pluginDir, "manifest.json"), remoteManifestText, "utf8")
+    ];
+    if (hasStyles) writes.push(fsp.writeFile(path.join(pluginDir, "styles.css"), stylesCss, "utf8"));
+    await Promise.all(writes);
+
+    if (!hasStyles) {
+      const css = path.join(pluginDir, "styles.css");
+      if (await exists(css)) await fsp.rm(css, { force: true });
+    }
+
+    await this.refreshPluginManifestCache(pluginId, remoteManifest);
+
+    new Notice(`Updater Plugin: ${local.version} → ${remoteManifest.version}. Перезапускаю себя…`);
+
     const api = this.app.plugins;
+    setTimeout(async () => {
+      try {
+        if (api?.disablePlugin) await api.disablePlugin(pluginId);
+        if (api?.enablePlugin) await api.enablePlugin(pluginId);
+        new Notice(`Updater Plugin ${remoteManifest.version} запущен.`);
+      } catch (restartError) {
+        console.error("[Updater Plugin] self restart failed:", restartError);
+        new Notice(`Updater Plugin обновлён до ${remoteManifest.version}, но автоматический перезапуск не удался. Перезапусти Obsidian один раз.`, 12000);
+      }
+    }, 150);
+
+    return true;
+  } catch (e) {
+    console.error("[Updater Plugin] self-update failed:", e);
 
     try {
-      if (typeof api?.loadManifests === "function") {
-        await api.loadManifests();
+      for (const name of ["main.js", "manifest.json", "styles.css"]) {
+        const old = path.join(rollback, name);
+        const cur = path.join(pluginDir, name);
+        if (await exists(old)) await fsp.copyFile(old, cur);
+        else if (await exists(cur)) await fsp.rm(cur, { force: true });
       }
-    } catch (e) {
-      console.warn("[Updater Plugin] loadManifests failed:", e);
+      await this.refreshPluginManifestCache(pluginId, local.manifest);
+    } catch (rollbackError) {
+      console.error("[Updater Plugin] self rollback failed:", rollbackError);
     }
 
-    try {
-      if (api?.manifests) {
-        api.manifests[pluginId] = manifest;
-      }
-
-      const loaded = api?.plugins?.[pluginId];
-      if (loaded && manifest) {
-        loaded.manifest = manifest;
-      }
-    } catch (e) {
-      console.warn("[Updater Plugin] manifest cache refresh failed:", e);
-    }
-
-    try {
-      const setting = this.app.setting;
-      const activeTab = setting?.activeTab;
-      if (activeTab && typeof activeTab.display === "function") {
-        const id = String(activeTab.id || activeTab.constructor?.name || "").toLowerCase();
-        if (id.includes("community") || id.includes("plugin")) {
-          activeTab.display();
-        }
-      }
-    } catch (e) {
-      console.warn("[Updater Plugin] settings UI refresh failed:", e);
-    }
+    new Notice(`Самообновление Updater Plugin не удалось: ${e.message}`, 10000);
+    return false;
   }
+}
 
   async installPreparedPlugin(info) {
     const { entry, local, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
