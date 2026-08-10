@@ -1,0 +1,20 @@
+name: Package Updater 0.7.1
+on:
+  push:
+    branches: [centralize-plugins]
+    paths: ['.github/workflows/package-updater-071.yml']
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - name: Package
+        run: zip -r updater-plugin-0.7.1.zip updater-plugin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-plugin-0.7.1
+          path: updater-plugin-0.7.1.zip
