@@ -86,6 +86,30 @@ function renderMultiPinIcon(button, crossedOut = false) {
     (0, import_obsidian.setIcon)(pin, crossedOut ? "pin-off" : "pin");
   }
 }
+function createScrollingTerm(container, term) {
+  const viewport = container.createSpan({ cls: "tir-term" });
+  const text = viewport.createSpan({ cls: "tir-term-text", text: term });
+  const stopScrolling = () => {
+    viewport.classList.remove("is-scrolling");
+  };
+  const startScrolling = () => {
+    stopScrolling();
+    const overflow = Math.ceil(text.scrollWidth - viewport.clientWidth);
+    if (overflow <= 1) return;
+    viewport.style.setProperty("--tir-term-offset", `-${overflow}px`);
+    viewport.style.setProperty(
+      "--tir-term-scroll-duration",
+      `${Math.max(1.6, overflow / 48).toFixed(2)}s`
+    );
+    void viewport.offsetWidth;
+    viewport.classList.add("is-scrolling");
+  };
+  container.addEventListener("mouseenter", startScrolling);
+  container.addEventListener("mouseleave", stopScrolling);
+  container.addEventListener("focusin", startScrolling);
+  container.addEventListener("focusout", stopScrolling);
+  return viewport;
+}
 
 // src/parser.ts
 var FENCE_PATTERN = /^\s*(`{3,}|~{3,})/;
@@ -604,7 +628,7 @@ var QueueView = class extends import_obsidian.ItemView {
     entry.dataset.sectionKind = kind;
     entry.dataset.baseOrder = String(list.childElementCount);
     const content = available ? entry.createEl("button", { cls: "tir-term-button" }) : entry.createDiv({ cls: "tir-term-row" });
-    content.createSpan({ cls: "tir-term", text: formatTermForDisplay(card.term) });
+    createScrollingTerm(content, formatTermForDisplay(card.term));
     const time = content.createSpan({
       cls: available ? "tir-time tir-time-due" : "tir-time",
       text: formatCardDueTime(card.dueAt, available, now)

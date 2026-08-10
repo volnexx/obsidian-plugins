@@ -155,6 +155,7 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   min-width: 0;
   min-height: 68px;
   padding: 13px 14px;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -318,11 +319,32 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-term {
-  overflow-wrap: anywhere;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-normal);
   font-size: 1em;
   font-weight: var(--font-medium);
   line-height: 1.4;
+  white-space: nowrap;
+}
+
+.tir-term-text {
+  display: inline-block;
+  min-width: 100%;
+  transform: translateX(0);
+  will-change: transform;
+}
+
+.tir-term.is-scrolling .tir-term-text {
+  animation: tir-term-scroll var(--tir-term-scroll-duration, 2s) linear 180ms forwards;
+}
+
+@keyframes tir-term-scroll {
+  to {
+    transform: translateX(var(--tir-term-offset, 0px));
+  }
 }
 
 .tir-time {
