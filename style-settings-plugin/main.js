@@ -51,6 +51,14 @@ function parsePreset(text){
   if(!text||!text.trim()) throw new Error('пустой набор');
   const p=JSON.parse(text); if(!p||typeof p!=='object'||Array.isArray(p)) throw new Error('ожидается объект JSON'); return p;
 }
+function parseThemesArray(text){
+  if(!text||!text.trim()) throw new Error('поле тем пустое');
+  const arr=JSON.parse(text);
+  if(!Array.isArray(arr)) throw new Error('ожидается JSON-массив из 8 объектов');
+  if(arr.length!==8) throw new Error(`нужно ровно 8 тем, сейчас: ${arr.length}`);
+  arr.forEach((theme,i)=>{if(!theme||typeof theme!=='object'||Array.isArray(theme)) throw new Error(`тема ${i+1}: ожидается объект JSON`);});
+  return arr;
+}
 function cssVarName(fullKey){
   const parts=fullKey.split('@@'); return parts.length>=2?parts[1]:fullKey;
 }
@@ -73,12 +81,28 @@ class ColorCycleSettingTab extends PluginSettingTab{
     new Setting(containerEl).setName('Частота обновления').setDesc('30 кадров/с — нормальный вариант для iPhone.')
       .addDropdown(d=>d.addOption('15','15 кадров/с').addOption('30','30 кадров/с').addOption('60','60 кадров/с').setValue(String(this.plugin.settings.fps)).onChange(async v=>{this.plugin.settings.fps=Number(v);await this.plugin.saveSettings();}));
     const s=this.plugin.validatePresets(); const el=containerEl.createDiv({cls:'sscc-status'}); el.setText(s.ok?`Готово: ${s.colorKeyCount} цветовых параметров участвуют в переливе.`:`Ошибка: ${s.message}`); el.toggleClass('is-ok',s.ok);el.toggleClass('is-error',!s.ok);
-    for(let i=0;i<8;i++){
-      const preset=this.plugin.settings.presets[i]; const details=containerEl.createEl('details',{cls:'sscc-preset'}); details.createEl('summary',{text:`${i+1}. ${preset.name}`});
-      new Setting(details).setName('Название').addText(t=>t.setValue(preset.name).onChange(async v=>{preset.name=v||`Тема ${i+1}`;await this.plugin.saveSettings();}));
-      new Setting(details).setName('Набор Style Settings').addTextArea(a=>{a.setValue(preset.json).onChange(async v=>{preset.json=v;await this.plugin.saveSettings();this.plugin.restartCycleIfRunning();});a.inputEl.rows=10;a.inputEl.addClass('sscc-json');});
-      const row=details.createDiv({cls:'sscc-actions'}); const test=row.createEl('button',{text:'Проверить'}); test.addEventListener('click',()=>{try{const o=parsePreset(preset.json);const c=Object.values(o).filter(v=>!!parseColor(v)).length;new Notice(`«${preset.name}»: JSON корректен, цветов: ${c}.`);}catch(e){new Notice(`Ошибка: ${e.message}`);}});
-    }
+
+    containerEl.createEl('h3',{text:'Все 8 тем'});
+    containerEl.createEl('p',{text:'Одно поле для всех тем. Формат — JSON-массив из 8 объектов в порядке: красная, оранжевая, жёлтая, зелёная, голубая, синяя, фиолетовая, розовая.'});
+    let draft=this.plugin.getThemesArrayText();
+    new Setting(containerEl).setName('Массив тем').setDesc('Вставь сюда весь массив целиком. Пустые строки внутри объектов не мешают, потому что разделителем служат элементы JSON-массива.')
+      .addTextArea(a=>{a.setValue(draft).onChange(v=>{draft=v;});a.inputEl.rows=28;a.inputEl.addClass('sscc-json');a.inputEl.style.width='100%';a.inputEl.style.minHeight='520px';});
+    const actions=containerEl.createDiv({cls:'sscc-actions'});
+    const apply=actions.createEl('button',{text:'Применить 8 тем'});
+    apply.addEventListener('click',async()=>{
+      try{
+        const arr=parseThemesArray(draft);
+        this.plugin.setThemesFromArray(arr);
+        await this.plugin.saveSettings();
+        this.plugin.restartCycleIfRunning();
+        new Notice('Все 8 тем сохранены.');
+        this.display();
+      }catch(e){new Notice(`Ошибка массива тем: ${e.message}`);}
+    });
+    const check=actions.createEl('button',{text:'Проверить массив'});
+    check.addEventListener('click',()=>{
+      try{const arr=parseThemesArray(draft);const counts=arr.map(o=>Object.values(o).filter(v=>!!parseColor(v)).length);new Notice(`Массив корректен. Тем: 8. Цветовых значений: ${counts.join(', ')}.`);}catch(e){new Notice(`Ошибка массива тем: ${e.message}`);}
+    });
   }
 }
 
@@ -95,6 +119,14 @@ module.exports=class StyleSettingsColorCyclePlugin extends Plugin{
   }
   onunload(){this.stopCycle(true);if(this.styleTag)this.styleTag.remove();}
   async saveSettings(){await this.saveData(this.settings);}
+  getThemesArrayText(){
+    const arr=this.settings.presets.map(p=>{try{return parsePreset(p.json);}catch{return {};}});
+    return JSON.stringify(arr,null,2);
+  }
+  setThemesFromArray(arr){
+    const names=['Красная','Оранжевая','Жёлтая','Зелёная','Голубая','Синяя','Фиолетовая','Розовая'];
+    this.settings.presets=arr.map((obj,i)=>({name:names[i],json:JSON.stringify(obj,null,2)}));
+  }
   compilePresets(){
     const parsed=this.settings.presets.map(p=>parsePreset(p.json));
     const colorMaps=parsed.map(obj=>{const out=new Map();for(const [k,v] of Object.entries(obj)){const c=parseColor(v);if(c)out.set(k,c);}return out;});
