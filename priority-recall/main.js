@@ -166,6 +166,7 @@ function scheduleCorrect(card, now) {
     ...card,
     stage: nextStage,
     dueAt: now + interval,
+    suppressSleepWindowEarlyReview: false,
     updatedAt: now,
     lastReviewedAt: now,
     correctCount: card.correctCount + 1
@@ -176,12 +177,28 @@ function scheduleIncorrect(card, now) {
     ...card,
     stage: 0,
     dueAt: now + REVIEW_INTERVALS[0],
+    suppressSleepWindowEarlyReview: false,
     updatedAt: now,
     lastReviewedAt: now,
     incorrectCount: card.incorrectCount + 1
   };
 }
+function scheduleSleepWindowReview(card, now, correct) {
+  const currentStage = clampStage(card.stage);
+  const interval = REVIEW_INTERVALS[currentStage] ?? REVIEW_INTERVALS[0];
+  return {
+    ...card,
+    stage: currentStage,
+    dueAt: now + interval,
+    suppressSleepWindowEarlyReview: true,
+    updatedAt: now,
+    lastReviewedAt: now,
+    correctCount: card.correctCount + (correct ? 1 : 0),
+    incorrectCount: card.incorrectCount + (correct ? 0 : 1)
+  };
+}
 function isSleepWindowEarlyReview(card, now) {
+  if (card.suppressSleepWindowEarlyReview === true) return false;
   const sleepWindowEnd = getActiveSleepWindowEnd(now);
   return sleepWindowEnd !== null && card.dueAt > now && card.dueAt <= sleepWindowEnd;
 }
@@ -234,30 +251,29 @@ function formatCardDueTime(dueAt, available, now) {
 }
 
 // src/queue.ts
-function compareCardsWithPins(left, right, pinnedCardIds) {
-  const leftPinned = pinnedCardIds.has(left.id);
-  const rightPinned = pinnedCardIds.has(right.id);
-  if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
-  return compareCardsByDueTime(left, right);
-}
 function partitionCardsByPriority(cards, urgentSourcePaths, pinnedCardIds, now) {
   const { available, upcoming } = partitionCards([...cards], now);
+  const pinnedAvailable = [];
   const urgentAvailable = [];
   const regularAvailable = [];
   for (const card of available) {
-    (urgentSourcePaths.has(card.sourcePath) ? urgentAvailable : regularAvailable).push(card);
+    if (pinnedCardIds.has(card.id)) pinnedAvailable.push(card);
+    else if (urgentSourcePaths.has(card.sourcePath)) urgentAvailable.push(card);
+    else regularAvailable.push(card);
   }
-  urgentAvailable.sort((left, right) => compareCardsWithPins(left, right, pinnedCardIds));
+  pinnedAvailable.sort(compareCardsByDueTime);
+  urgentAvailable.sort(compareCardsByDueTime);
   regularAvailable.sort(compareCardsByDueTime);
-  return { urgentAvailable, regularAvailable, upcoming };
+  return { pinnedAvailable, urgentAvailable, regularAvailable, upcoming };
 }
 function getAutomaticReviewQueue(cards, urgentSourcePaths, pinnedCardIds, now) {
-  const { urgentAvailable, regularAvailable } = partitionCardsByPriority(
+  const { pinnedAvailable, urgentAvailable, regularAvailable } = partitionCardsByPriority(
     cards,
     urgentSourcePaths,
     pinnedCardIds,
     now
   );
+  if (pinnedCardIds.size > 0) return pinnedAvailable;
   return urgentSourcePaths.size > 0 ? urgentAvailable : regularAvailable;
 }
 function getNoteTitle(sourcePath) {
@@ -313,11 +329,17 @@ function scoreCardSearch(card, query) {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return 0;
   const term = normalizeSearchText(formatTermForDisplay(card.term));
+  const definition = normalizeSearchText(formatCardTextForDisplay(card.definition));
   const noteTitle = normalizeSearchText(getNoteTitle(card.sourcePath));
   const termScore = scoreSearchText(term, normalizedQuery);
+  const definitionScore = scoreSearchText(definition, normalizedQuery);
   const noteScore = scoreSearchText(noteTitle, normalizedQuery);
-  if (termScore === null && noteScore === null) return null;
-  return Math.max(termScore === null ? -1 : termScore + 100, noteScore ?? -1);
+  if (termScore === null && definitionScore === null && noteScore === null) return null;
+  return Math.max(
+    termScore === null ? -1 : termScore + 200,
+    definitionScore === null ? -1 : definitionScore + 100,
+    noteScore ?? -1
+  );
 }
 
 // src/review-flow.ts
@@ -338,7 +360,7 @@ function chooseReviewCompletionAction(cards, completedCardId, forceWait, urgentS
     (card) => card.id !== completedCardId
   );
   if (nextAvailable) return { type: "open", cardId: nextAvailable.id };
-  const automaticCards = urgentSourcePaths.size > 0 ? cards.filter((card) => urgentSourcePaths.has(card.sourcePath)) : cards;
+  const automaticCards = pinnedCardIds.size > 0 ? cards.filter((card) => pinnedCardIds.has(card.id)) : urgentSourcePaths.size > 0 ? cards.filter((card) => urgentSourcePaths.has(card.sourcePath)) : cards;
   const nearest = automaticCards.reduce((current, card) => {
     if (current === null) return card;
     if (card.dueAt !== current.dueAt) return card.dueAt < current.dueAt ? card : current;
@@ -426,10 +448,10 @@ var QueueView = class extends import_obsidian.ItemView {
       this.plugin.pinnedCardIds,
       now
     );
-    const { urgentAvailable, regularAvailable, upcoming } = partition;
-    const availableCount = urgentAvailable.length + regularAvailable.length;
+    const { pinnedAvailable, urgentAvailable, regularAvailable, upcoming } = partition;
+    const availableCount = pinnedAvailable.length + urgentAvailable.length + regularAvailable.length;
     const cardSignature = (card) => `${card.id}@${card.dueAt}`;
-    const signature = `urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned:${[...this.plugin.pinnedCardIds].sort().join(",")}`;
+    const signature = `pinned:${pinnedAvailable.map(cardSignature).join(",")}|urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned-ids:${[...this.plugin.pinnedCardIds].sort().join(",")}`;
     if (!force && signature === this.structureSignature) {
       this.updateTimeLabels(now);
       return;
@@ -471,13 +493,25 @@ var QueueView = class extends import_obsidian.ItemView {
       cls: "tir-search",
       type: "search",
       value: this.searchQuery,
-      placeholder: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0442\u0435\u0440\u043C\u0438\u043D\u0443 \u0438\u043B\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0435\u2026",
-      attr: { "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u043F\u043E \u0442\u0435\u0440\u043C\u0438\u043D\u0443 \u0438\u043B\u0438 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0438" }
+      placeholder: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0442\u0435\u0440\u043C\u0438\u043D\u0443, \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E \u0438\u043B\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0435\u2026",
+      attr: { "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A \u043F\u043E \u0442\u0435\u0440\u043C\u0438\u043D\u0443, \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E \u0438\u043B\u0438 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0438" }
     });
     search.addEventListener("input", () => {
       this.searchQuery = search.value;
       this.applySearchFilter();
     });
+    if (pinnedAvailable.length > 0) {
+      this.createSection(
+        root,
+        "\u0417\u0430\u043A\u0440\u0435\u043F\u043B\u0435\u043D\u043E",
+        "pinned",
+        pinnedAvailable,
+        true,
+        now,
+        "\u0417\u0430\u043A\u0440\u0435\u043F\u043B\u0451\u043D\u043D\u044B\u0445 \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A \u043D\u0435\u0442",
+        "tir-pinned-section"
+      );
+    }
     if (urgentAvailable.length > 0) {
       this.createSection(
         root,
@@ -583,8 +617,9 @@ var QueueView = class extends import_obsidian.ItemView {
       });
     }
     const isUrgent = this.plugin.isUrgentSource(card.sourcePath);
+    const isPinned = this.plugin.isPinnedCard(card.id);
+    const actions = entry.createDiv({ cls: "tir-entry-actions" });
     if (isUrgent) {
-      const actions = entry.createDiv({ cls: "tir-entry-actions" });
       const remove = actions.createEl("button", {
         cls: "tir-urgent-toggle tir-urgent-remove is-active",
         text: "\u0423\u0431\u0440\u0430\u0442\u044C",
@@ -597,22 +632,8 @@ var QueueView = class extends import_obsidian.ItemView {
       remove.addEventListener("click", () => {
         void this.plugin.toggleUrgentSource(card.sourcePath);
       });
-      const isPinned = this.plugin.isPinnedCard(card.id);
-      const pin = actions.createEl("button", {
-        cls: isPinned ? "tir-pin-toggle is-active" : "tir-pin-toggle",
-        attr: {
-          type: "button",
-          "aria-label": isPinned ? `\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}` : `\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}`,
-          "aria-pressed": String(isPinned),
-          title: isPinned ? "\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443" : "\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443"
-        }
-      });
-      (0, import_obsidian.setIcon)(pin, "pin");
-      pin.addEventListener("click", () => {
-        void this.plugin.togglePinnedCard(card.id);
-      });
     } else {
-      const priority = entry.createEl("button", {
+      const priority = actions.createEl("button", {
         cls: "tir-urgent-toggle tir-multi-pin-toggle",
         attr: {
           type: "button",
@@ -626,6 +647,19 @@ var QueueView = class extends import_obsidian.ItemView {
         void this.plugin.toggleUrgentSource(card.sourcePath);
       });
     }
+    const pin = actions.createEl("button", {
+      cls: isPinned ? "tir-pin-toggle is-active" : "tir-pin-toggle",
+      attr: {
+        type: "button",
+        "aria-label": isPinned ? `\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}` : `\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}`,
+        "aria-pressed": String(isPinned),
+        title: isPinned ? "\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443" : "\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443"
+      }
+    });
+    (0, import_obsidian.setIcon)(pin, isPinned ? "pin-off" : "pin");
+    pin.addEventListener("click", () => {
+      void this.plugin.togglePinnedCard(card.id);
+    });
   }
   applySearchFilter() {
     const query = this.searchQuery;
@@ -672,7 +706,7 @@ var QueueView = class extends import_obsidian.ItemView {
     }
     const queueCount = this.contentEl.querySelector("[data-queue-count]");
     if (queueCount) {
-      const count = (visibleCounts.get("urgent") ?? 0) + (visibleCounts.get("regular") ?? 0);
+      const count = (visibleCounts.get("pinned") ?? 0) + (visibleCounts.get("urgent") ?? 0) + (visibleCounts.get("regular") ?? 0);
       queueCount.setText(String(count));
       queueCount.setAttribute("aria-label", `\u0414\u043E\u0441\u0442\u0443\u043F\u043D\u043E \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A: ${count}`);
       queueCount.classList.toggle("tir-count-active", count > 0);
@@ -740,7 +774,8 @@ var ReviewView = class extends import_obsidian.ItemView {
     topInfo.createSpan({
       text: card.stage === REVIEW_INTERVALS.length - 1 ? "\u0446\u0438\u043A\u043B: \u043A\u0430\u0436\u0434\u044B\u0435 9 \u0434\u043D\u0435\u0439" : `\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B: ${stageIntervalLabel(card.stage)}`
     });
-    const urgent = top.createEl("button", {
+    const priorityActions = top.createDiv({ cls: "tir-review-priority-actions" });
+    const urgent = priorityActions.createEl("button", {
       cls: "tir-review-urgent-toggle",
       text: "",
       attr: { type: "button" }
@@ -749,6 +784,14 @@ var ReviewView = class extends import_obsidian.ItemView {
       void this.plugin.toggleUrgentSource(card.sourcePath);
     });
     this.updateUrgentButton(urgent, card);
+    const pin = priorityActions.createEl("button", {
+      cls: "tir-review-pin-toggle",
+      attr: { type: "button" }
+    });
+    pin.addEventListener("click", () => {
+      void this.plugin.togglePinnedCard(card.id);
+    });
+    this.updatePinButton(pin, card);
     const flashcard = wrapper.createDiv({ cls: "tir-flashcard" });
     const term = flashcard.createDiv({ cls: "tir-flashcard-term markdown-rendered" });
     await this.renderMarkdown(formatTermForDisplay(card.term), term, card.sourcePath);
@@ -923,6 +966,8 @@ var ReviewView = class extends import_obsidian.ItemView {
     if (!card) return;
     const urgent = this.contentEl.querySelector(".tir-review-urgent-toggle");
     if (urgent) this.updateUrgentButton(urgent, card);
+    const pin = this.contentEl.querySelector(".tir-review-pin-toggle");
+    if (pin) this.updatePinButton(pin, card);
     const navigation = this.getNavigation();
     const previous = this.contentEl.querySelector(
       '[data-navigation-direction="previous"]'
@@ -954,6 +999,18 @@ var ReviewView = class extends import_obsidian.ItemView {
       isUrgent ? `\u0423\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${card.sourcePath} \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445` : `\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${card.sourcePath} \u0432 \u0441\u0440\u043E\u0447\u043D\u044B\u0435`
     );
     button.title = isUrgent ? "\u0423\u0431\u0440\u0430\u0442\u044C \u0432\u0441\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445" : "\u0421\u0434\u0435\u043B\u0430\u0442\u044C \u0432\u0441\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0441\u0440\u043E\u0447\u043D\u043E\u0439";
+  }
+  updatePinButton(button, card) {
+    const isPinned = this.plugin.isPinnedCard(card.id);
+    button.disabled = false;
+    button.classList.toggle("is-active", isPinned);
+    button.setAttribute("aria-pressed", String(isPinned));
+    button.setAttribute(
+      "aria-label",
+      isPinned ? `\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}` : `\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 ${formatTermForDisplay(card.term)}`
+    );
+    button.title = isPinned ? "\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443" : "\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443";
+    (0, import_obsidian.setIcon)(button, isPinned ? "pin-off" : "pin");
   }
 };
 var TermIntervalReviewSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -1059,9 +1116,6 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   async toggleUrgentSource(path) {
     if (this.urgentSourcePaths.has(path)) {
       this.urgentSourcePaths.delete(path);
-      for (const card of this.cards) {
-        if (card.sourcePath === path) this.pinnedCardIds.delete(card.id);
-      }
     } else this.urgentSourcePaths.add(path);
     this.clearQueueSearch();
     await this.persistNow();
@@ -1070,7 +1124,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   }
   async togglePinnedCard(id) {
     const card = this.getCard(id);
-    if (!card || !this.urgentSourcePaths.has(card.sourcePath)) return;
+    if (!card) return;
     if (this.pinnedCardIds.has(id)) this.pinnedCardIds.delete(id);
     else this.pinnedCardIds.add(id);
     await this.persistNow();
@@ -1107,7 +1161,8 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     const index = this.cards.findIndex((card2) => card2.id === cardId);
     const card = this.cards[index];
     if (index < 0 || !card) return null;
-    const updated = correct ? scheduleCorrect(card, Date.now()) : scheduleIncorrect(card, Date.now());
+    const now = Date.now();
+    const updated = isSleepWindowEarlyReview(card, now) ? scheduleSleepWindowReview(card, now, correct) : correct ? scheduleCorrect(card, now) : scheduleIncorrect(card, now);
     this.cards[index] = updated;
     await this.persistNow();
     this.refreshViews(true);
@@ -1180,11 +1235,12 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       updatedAt: Number.isFinite(card.updatedAt) ? card.updatedAt : now,
       lastReviewedAt: Number.isFinite(card.lastReviewedAt) ? card.lastReviewedAt : null,
       correctCount: Number.isFinite(card.correctCount) ? card.correctCount : 0,
-      incorrectCount: Number.isFinite(card.incorrectCount) ? card.incorrectCount : 0
+      incorrectCount: Number.isFinite(card.incorrectCount) ? card.incorrectCount : 0,
+      suppressSleepWindowEarlyReview: card.suppressSleepWindowEarlyReview === true
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if ((rawVersion === 3 || rawVersion === 4 || rawVersion === 5 || rawVersion === 6) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if ((rawVersion === 3 || rawVersion === 4 || rawVersion === 5 || rawVersion === 6 || rawVersion === 7) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1197,9 +1253,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     const rawPinned = raw && typeof raw === "object" ? raw.pinnedCardIds : null;
     if (Array.isArray(rawPinned)) {
-      const cardIds = new Set(
-        this.cards.filter((card) => this.urgentSourcePaths.has(card.sourcePath)).map((card) => card.id)
-      );
+      const cardIds = new Set(this.cards.map((card) => card.id));
       this.pinnedCardIds = new Set(
         rawPinned.filter((id) => typeof id === "string" && cardIds.has(id))
       );
@@ -1308,7 +1362,8 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
           updatedAt: now,
           lastReviewedAt: null,
           correctCount: 0,
-          incorrectCount: 0
+          incorrectCount: 0,
+          suppressSleepWindowEarlyReview: false
         };
         nextForFile.push(created);
         cardsChanged = true;
@@ -1448,7 +1503,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 6,
+        version: 7,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,

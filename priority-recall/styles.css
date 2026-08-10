@@ -106,11 +106,13 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   border-top: 1px solid var(--background-modifier-border);
 }
 
+.tir-pinned-section,
 .tir-urgent-section {
   padding-bottom: 4px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.tir-pinned-section .tir-section-title,
 .tir-urgent-section .tir-section-title {
   color: var(--text-muted);
 }
@@ -370,6 +372,13 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   gap: 10px;
 }
 
+.tir-review-priority-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-height: 34px;
+}
+
 .tir-review-urgent-toggle {
   appearance: none;
   flex: 0 0 auto;
@@ -385,6 +394,11 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   opacity: 1 !important;
   visibility: visible !important;
   box-shadow: none;
+}
+
+.tir-review-priority-actions .tir-review-urgent-toggle {
+  margin: 0;
+  border-radius: var(--button-radius) 0 0 var(--button-radius);
 }
 
 .tir-review-urgent-toggle:hover,
@@ -407,6 +421,49 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   align-items: center;
   justify-content: center;
   padding: 3px 8px;
+}
+
+.tir-review-pin-toggle {
+  appearance: none;
+  display: inline-flex;
+  flex: 0 0 42px;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 34px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-left: 0;
+  border-radius: 0 var(--button-radius) var(--button-radius) 0;
+  background: var(--interactive-normal) !important;
+  background-image: none !important;
+  color: var(--text-muted) !important;
+  -webkit-text-fill-color: currentColor !important;
+  box-shadow: none;
+}
+
+.tir-review-pin-toggle:hover:not(:disabled),
+.tir-review-pin-toggle:focus-visible:not(:disabled) {
+  border-color: var(--background-modifier-border);
+  background: var(--interactive-hover) !important;
+  color: var(--text-normal) !important;
+  box-shadow: none;
+}
+
+.tir-review-pin-toggle.is-active {
+  color: var(--interactive-accent) !important;
+}
+
+.tir-review-pin-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.tir-review-pin-toggle svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
 }
 
 .tir-flashcard {
@@ -597,6 +654,11 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   }
 
   .tir-review-urgent-toggle {
+    flex: 1 1 auto;
+    width: auto;
+  }
+
+  .tir-review-priority-actions {
     width: 100%;
   }
 
