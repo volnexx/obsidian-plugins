@@ -19,8 +19,9 @@ jobs:
           ref: centralize-plugins
 
       - name: Patch updater
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
           import json
 
@@ -29,7 +30,7 @@ jobs:
 
           if 'async refreshPluginManifestCache' not in s:
               marker = '  async installPreparedPlugin(info) {'
-              method = r'''  async refreshPluginManifestCache(pluginId, manifest) {
+              method = '''  async refreshPluginManifestCache(pluginId, manifest) {
             const api = this.app.plugins;
 
             try {
@@ -89,6 +90,7 @@ jobs:
                   item['version'] = '0.6.1'
                   break
           rp.write_text(json.dumps(r, ensure_ascii=False, indent=2) + '\n')
+          PY
 
       - name: Commit fix
         shell: bash
