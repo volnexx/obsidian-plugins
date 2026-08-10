@@ -77,13 +77,13 @@ function formatCardTextForDisplay(text) {
   return text.replaceAll("**", "");
 }
 var formatTermForDisplay = formatCardTextForDisplay;
-function renderMultiPinIcon(button) {
+function renderMultiPinIcon(button, crossedOut = false) {
   button.empty();
   const group = button.createSpan({ cls: "tir-multi-pin-icon" });
   group.setAttribute("aria-hidden", "true");
   for (let index = 1; index <= 3; index += 1) {
     const pin = group.createSpan({ cls: `tir-multi-pin-part tir-multi-pin-part-${index}` });
-    (0, import_obsidian.setIcon)(pin, "pin");
+    (0, import_obsidian.setIcon)(pin, crossedOut ? "pin-off" : "pin");
   }
 }
 
@@ -621,14 +621,14 @@ var QueueView = class extends import_obsidian.ItemView {
     const actions = entry.createDiv({ cls: "tir-entry-actions" });
     if (isUrgent) {
       const remove = actions.createEl("button", {
-        cls: "tir-urgent-toggle tir-urgent-remove is-active",
-        text: "\u0423\u0431\u0440\u0430\u0442\u044C",
+        cls: "tir-urgent-toggle tir-multi-pin-toggle tir-urgent-remove is-active",
         attr: {
           type: "button",
           "aria-label": `\u0423\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${card.sourcePath} \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445`,
           title: "\u0423\u0431\u0440\u0430\u0442\u044C \u0432\u0441\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445"
         }
       });
+      renderMultiPinIcon(remove, true);
       remove.addEventListener("click", () => {
         void this.plugin.toggleUrgentSource(card.sourcePath);
       });
@@ -989,10 +989,9 @@ var ReviewView = class extends import_obsidian.ItemView {
   }
   updateUrgentButton(button, card) {
     const isUrgent = this.plugin.isUrgentSource(card.sourcePath);
-    if (isUrgent) button.setText("\u0423\u0431\u0440\u0430\u0442\u044C");
-    else renderMultiPinIcon(button);
+    renderMultiPinIcon(button, isUrgent);
     button.classList.toggle("is-active", isUrgent);
-    button.classList.toggle("tir-multi-pin-toggle", !isUrgent);
+    button.classList.add("tir-multi-pin-toggle");
     button.setAttribute("aria-pressed", String(isUrgent));
     button.setAttribute(
       "aria-label",
