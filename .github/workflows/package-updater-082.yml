@@ -1,0 +1,21 @@
+name: Package Updater 0.8.2
+on:
+  push:
+    branches: [centralize-plugins]
+    paths:
+      - '.github/workflows/package-updater-082.yml'
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - name: Build zip
+        run: zip -r updater-plugin-0.8.2.zip updater-plugin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-plugin-0.8.2
+          path: updater-plugin-0.8.2.zip
