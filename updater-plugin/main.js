@@ -455,6 +455,70 @@ module.exports = class UpdaterPlugin extends Plugin {
     };
   }
 
+  async pluginFilesDiffer(info) {
+    const { entry, local } = info;
+    const source = this.sourceFor(entry);
+
+    try {
+      const [remoteMain, remoteManifestText, remoteStyles] = await Promise.all([
+        this.rawText(source.repo, source.branch, `${source.prefix}main.js`),
+        this.rawText(source.repo, source.branch, `${source.prefix}manifest.json`),
+        this.rawText(source.repo, source.branch, `${source.prefix}styles.css`)
+          .then(text => ({ exists: true, text }))
+          .catch(() => ({ exists: false, text: "" }))
+      ]);
+
+      const localMainPath = path.join(local.dir, "main.js");
+      const localManifestPath = path.join(local.dir, "manifest.json");
+      const localStylesPath = path.join(local.dir, "styles.css");
+
+      if (!(await exists(localMainPath)) || !(await exists(localManifestPath))) return true;
+
+      const [localMain, localManifestText] = await Promise.all([
+        fsp.readFile(localMainPath, "utf8"),
+        fsp.readFile(localManifestPath, "utf8")
+      ]);
+
+      if (localMain !== remoteMain) return true;
+
+      let remoteManifest, localManifest;
+      try {
+        remoteManifest = JSON.parse(remoteManifestText);
+        localManifest = JSON.parse(localManifestText);
+      } catch {
+        return true;
+      }
+
+      for (const key of ["id", "name", "version", "minAppVersion", "description", "author", "isDesktopOnly"]) {
+        if (JSON.stringify(remoteManifest?.[key]) !== JSON.stringify(localManifest?.[key])) return true;
+      }
+
+      const localHasStyles = await exists(localStylesPath);
+      if (remoteStyles.exists !== localHasStyles) return true;
+      if (remoteStyles.exists) {
+        const localStyles = await fsp.readFile(localStylesPath, "utf8");
+        if (localStyles !== remoteStyles.text) return true;
+      }
+
+      return false;
+    } catch (e) {
+      console.warn(`[Updater Plugin] integrity check skipped for ${local?.name || entry?.name}:`, e);
+      return false;
+    }
+  }
+
+  async findUpdates(plugins) {
+    const checked = await Promise.all(plugins.map(async p => {
+      const cmp = compareVersions(p.entry.version, p.local.version);
+      if (cmp > 0) return { ...p, updateReason: "version" };
+      if (cmp < 0) return null;
+
+      const differs = await this.pluginFilesDiffer(p);
+      return differs ? { ...p, updateReason: "files" } : null;
+    }));
+    return checked.filter(Boolean);
+  }
+
   async checkOnly() {
     if (this._busy) {
       new Notice("Операция уже выполняется.");
@@ -483,9 +547,7 @@ module.exports = class UpdaterPlugin extends Plugin {
         );
       }
 
-      const updates = plugins.filter(p =>
-        compareVersions(p.entry.version, p.local.version) > 0
-      );
+      const updates = await this.findUpdates(plugins);
 
       if (!updates.length) {
         new Notice(`В репозитории: ${discovered.all.length}; сопоставлено локально: ${plugins.length}; обновлений нет.`);
@@ -494,7 +556,10 @@ module.exports = class UpdaterPlugin extends Plugin {
 
       new Notice(
         `Обновлений: ${updates.length}. ` +
-        updates.map(p => `${p.local.name} ${p.local.version} → ${p.entry.version}`).join("; "),
+        updates.map(p => p.updateReason === "files"
+          ? `${p.local.name} ${p.local.version} — файлы отличаются от репозитория`
+          : `${p.local.name} ${p.local.version} → ${p.entry.version}`
+        ).join("; "),
         12000
       );
     } catch (e) {
@@ -644,9 +709,7 @@ module.exports = class UpdaterPlugin extends Plugin {
         );
       }
 
-      const updates = plugins.filter(p =>
-        compareVersions(p.entry.version, p.local.version) > 0
-      );
+      const updates = await this.findUpdates(plugins);
 
       if (!updates.length) {
         new Notice(`В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений нет.`);

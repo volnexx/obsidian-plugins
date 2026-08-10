@@ -1,9 +1,9 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "minAppVersion": "1.5.0",
-  "description": "Обновляет плагины без горячего отключения и распознаёт переименованные версии по id, папке, имени и безопасному совпадению автора+названия.",
+  "description": "Обновляет плагины по версии и дополнительно чинит рассинхрон: при одинаковой версии сравнивает реальные main.js, manifest.json и styles.css.",
   "author": "volnexx",
   "isDesktopOnly": true
 }
