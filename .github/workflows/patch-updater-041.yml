@@ -1,0 +1,110 @@
+name: Patch Updater Plugin 0.4.1
+
+on:
+  push:
+    branches:
+      - centralize-plugins
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+
+      - name: Patch updater
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          p = Path('updater-plugin/main.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'async refreshPluginManifestCache(pluginId, manifest)' not in s:
+              helper = r'''
+            async refreshPluginManifestCache(pluginId, manifest) {
+              const api = this.app.plugins;
+
+              try {
+                if (typeof api?.loadManifests === "function") {
+                  await api.loadManifests();
+                }
+              } catch (e) {
+                console.warn("[Updater Plugin] loadManifests failed:", e);
+              }
+
+              try {
+                if (api?.manifests) {
+                  api.manifests[pluginId] = manifest;
+                }
+
+                const loaded = api?.plugins?.[pluginId];
+                if (loaded && manifest) {
+                  loaded.manifest = manifest;
+                }
+              } catch (e) {
+                console.warn("[Updater Plugin] manifest cache refresh failed:", e);
+              }
+
+              try {
+                const setting = this.app.setting;
+                const activeTab = setting?.activeTab;
+                if (activeTab && typeof activeTab.display === "function") {
+                  const id = String(activeTab.id || activeTab.constructor?.name || "").toLowerCase();
+                  if (id.includes("community") || id.includes("plugin")) {
+                    activeTab.display();
+                  }
+                }
+              } catch (e) {
+                console.warn("[Updater Plugin] settings UI refresh failed:", e);
+              }
+            }
+          '''
+              s = s.replace('  async installPreparedPlugin(info) {', helper + '\n  async installPreparedPlugin(info) {')
+
+              old = '''        if (!hasStyles) {\n          const css = path.join(pluginDir, "styles.css");\n          if (await exists(css)) await fsp.rm(css, { force: true });\n        }\n\n        if (wasEnabled && api?.enablePlugin) {'''
+              new = '''        if (!hasStyles) {\n          const css = path.join(pluginDir, "styles.css");\n          if (await exists(css)) await fsp.rm(css, { force: true });\n        }\n\n        await this.refreshPluginManifestCache(pluginId, remoteManifest);\n\n        if (wasEnabled && api?.enablePlugin) {'''
+              s = s.replace(old, new)
+
+              old = '''        if (wasEnabled && api?.enablePlugin) {\n          try { await api.enablePlugin(pluginId); } catch {}\n        }\n\n        throw new Error(`Старая версия возвращена: ${e.message}`);'''
+              new = '''        await this.refreshPluginManifestCache(pluginId, local.manifest);\n\n        if (wasEnabled && api?.enablePlugin) {\n          try { await api.enablePlugin(pluginId); } catch {}\n        }\n\n        throw new Error(`Старая версия возвращена: ${e.message}`);'''
+              s = s.replace(old, new)
+
+          p.write_text(s, encoding='utf-8')
+
+          mp = Path('updater-plugin/manifest.json')
+          m = json.loads(mp.read_text(encoding='utf-8'))
+          m['version'] = '0.4.1'
+          mp.write_text(json.dumps(m, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          rp = Path('registry.json')
+          r = json.loads(rp.read_text(encoding='utf-8'))
+          for x in r['plugins']:
+              if x.get('id') == 'updater-plugin':
+                  x['version'] = '0.4.1'
+          rp.write_text(json.dumps(r, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          readme = Path('updater-plugin/README.md')
+          t = readme.read_text(encoding='utf-8')
+          if '## 0.4.1' not in t:
+              t += '\n\n## 0.4.1\n\nПосле установки новой версии обновляется внутренний кэш manifest.json Obsidian и открытый список сторонних плагинов.\n'
+          readme.write_text(t, encoding='utf-8')
+          PY
+
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updater-plugin/main.js updater-plugin/manifest.json updater-plugin/README.md registry.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Release Updater Plugin 0.4.1"
+          git push origin HEAD:centralize-plugins
