@@ -5,3 +5,7 @@
   margin: 8px 0;
   background: var(--background-secondary);
 }
+
+.updater-plugin-vault-restore-action {
+  cursor: pointer;
+}

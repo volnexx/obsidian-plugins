@@ -1,4 +1,4 @@
-const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter, setIcon } = require("obsidian");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
@@ -143,6 +143,21 @@ module.exports = class UpdaterPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    this._restoreActionElements = new Set();
+    this._restoreActionsByView = new WeakMap();
+
+    this.app.workspace.onLayoutReady(() => {
+      void this.refreshRestoreActions();
+    });
+
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      void this.refreshRestoreActions();
+    }));
+
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      void this.refreshRestoreActions();
+    }));
+
     this.addRibbonIcon("refresh-cw", "Обновить все наши плагины", () => this.safeUpdateAll());
 
     this.addCommand({
@@ -158,6 +173,224 @@ module.exports = class UpdaterPlugin extends Plugin {
     });
 
     this.addSettingTab(new UpdaterSettingTab(this.app, this));
+  }
+
+  onunload() {
+    for (const el of this._restoreActionElements || []) {
+      try { el.remove(); } catch {}
+    }
+    this._restoreActionElements?.clear();
+  }
+
+  getRestoreStatePath() {
+    return path.join(this.getBackupRoot(), "_updater-restore-state.json");
+  }
+
+  async readRestoreState() {
+    try {
+      const p = this.getRestoreStatePath();
+      if (!(await exists(p))) return { mode: "back", forwardPath: "" };
+      const state = JSON.parse(await fsp.readFile(p, "utf8"));
+      if (state?.mode === "redo" && typeof state.forwardPath === "string" && state.forwardPath) {
+        if (await exists(state.forwardPath)) return state;
+      }
+    } catch (e) {
+      console.warn("[Updater Plugin] restore state read failed:", e);
+    }
+    return { mode: "back", forwardPath: "" };
+  }
+
+  async writeRestoreState(state) {
+    const root = this.getBackupRoot();
+    await fsp.mkdir(root, { recursive: true });
+    await fsp.writeFile(this.getRestoreStatePath(), JSON.stringify(state, null, 2), "utf8");
+  }
+
+  async clearRestoreState() {
+    try { await fsp.rm(this.getRestoreStatePath(), { force: true }); } catch {}
+  }
+
+  async refreshRestoreActions() {
+    const state = await this.readRestoreState();
+    const isRedo = state.mode === "redo";
+    const icon = isRedo ? "redo-2" : "undo-2";
+    const title = isRedo ? "Вернуть хранилище вперёд" : "Откатить хранилище к последней резервной копии";
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+
+    for (const leaf of leaves) {
+      const view = leaf?.view;
+      if (!view || typeof view.addAction !== "function") continue;
+      let el = this._restoreActionsByView.get(view);
+      if (!el || !el.isConnected) {
+        el = view.addAction(icon, title, () => { void this.handleRestoreAction(); });
+        if (!el) continue;
+        el.addClass?.("updater-plugin-vault-restore-action");
+        this._restoreActionsByView.set(view, el);
+        this._restoreActionElements.add(el);
+      }
+      try {
+        setIcon(el, icon);
+        el.setAttribute("aria-label", title);
+        el.setAttribute("data-tooltip-position", "bottom");
+      } catch {}
+    }
+  }
+
+  async listUpdateBackups() {
+    const root = this.getBackupRoot();
+    if (!(await exists(root))) return [];
+    const dirs = await fsp.readdir(root, { withFileTypes: true });
+    return dirs.filter(e => e.isDirectory() && e.name.endsWith("_before-update"))
+      .map(e => path.join(root, e.name)).sort().reverse();
+  }
+
+  async createSnapshotForRestore(tag) {
+    const vault = this.getVaultPath();
+    const root = this.getBackupRoot();
+    await fsp.mkdir(root, { recursive: true });
+    const dst = path.join(root, `${stamp()}_${tag}`);
+    let method = "обычное копирование";
+
+    if (this.settings.fastBackup && process.platform === "linux") {
+      try {
+        await fsp.mkdir(dst, { recursive: true });
+        await runCommand("cp", ["-a", "--reflink=auto", `${vault}/.`, dst]);
+        method = "reflink/cp";
+      } catch (e) {
+        console.warn("[Updater Plugin] fast restore snapshot failed:", e);
+        await fsp.rm(dst, { recursive: true, force: true });
+        await copyDirFallback(vault, dst);
+      }
+    } else {
+      await copyDirFallback(vault, dst);
+    }
+
+    if (!(await exists(path.join(dst, ".obsidian")))) throw new Error("Снимок перед откатом повреждён: отсутствует .obsidian.");
+    await fsp.writeFile(path.join(dst, "_updater-plugin-restore-snapshot.json"), JSON.stringify({
+      createdAt: new Date().toISOString(), sourceVault: vault, updaterVersion: this.manifest.version, method
+    }, null, 2), "utf8");
+    return dst;
+  }
+
+  shouldPreserveRestorePath(rel) {
+    const normalized = rel.split(path.sep).join("/");
+    return normalized === ".obsidian/plugins/updater-plugin"
+      || normalized.startsWith(".obsidian/plugins/updater-plugin/")
+      || normalized === "_updater-plugin-backup.json"
+      || normalized === "_updater-plugin-restore-snapshot.json";
+  }
+
+  async restoreDirectoryExactFallback(srcRoot, dstRoot, rel = "") {
+    const src = rel ? path.join(srcRoot, rel) : srcRoot;
+    const dst = rel ? path.join(dstRoot, rel) : dstRoot;
+    if (this.shouldPreserveRestorePath(rel)) return;
+    await fsp.mkdir(dst, { recursive: true });
+
+    const srcEntries = new Map();
+    for (const e of await fsp.readdir(src, { withFileTypes: true })) srcEntries.set(e.name, e);
+    let dstEntries = [];
+    try { dstEntries = await fsp.readdir(dst, { withFileTypes: true }); } catch {}
+
+    for (const e of dstEntries) {
+      const childRel = rel ? path.join(rel, e.name) : e.name;
+      if (this.shouldPreserveRestorePath(childRel)) continue;
+      if (!srcEntries.has(e.name)) await fsp.rm(path.join(dst, e.name), { recursive: true, force: true });
+    }
+
+    for (const [name, e] of srcEntries) {
+      const childRel = rel ? path.join(rel, name) : name;
+      if (this.shouldPreserveRestorePath(childRel)) continue;
+      const srcPath = path.join(src, name);
+      const dstPath = path.join(dst, name);
+      if (e.isDirectory()) {
+        let dstStat = null;
+        try { dstStat = await fsp.stat(dstPath); } catch {}
+        if (dstStat && !dstStat.isDirectory()) await fsp.rm(dstPath, { recursive: true, force: true });
+        await this.restoreDirectoryExactFallback(srcRoot, dstRoot, childRel);
+      } else {
+        let dstStat = null;
+        try { dstStat = await fsp.stat(dstPath); } catch {}
+        if (dstStat?.isDirectory()) await fsp.rm(dstPath, { recursive: true, force: true });
+        await fsp.mkdir(path.dirname(dstPath), { recursive: true });
+        await fsp.copyFile(srcPath, dstPath);
+      }
+    }
+  }
+
+  async restoreVaultFromSnapshot(snapshotPath) {
+    const vault = this.getVaultPath();
+    if (!(await exists(snapshotPath))) throw new Error("Резервная копия больше не существует.");
+    if (!(await exists(path.join(snapshotPath, ".obsidian")))) throw new Error("В выбранной резервной копии отсутствует .obsidian.");
+
+    if (process.platform === "linux") {
+      try {
+        await runCommand("rsync", ["-a", "--delete", "--exclude=.obsidian/plugins/updater-plugin/", "--exclude=_updater-plugin-backup.json", "--exclude=_updater-plugin-restore-snapshot.json", `${snapshotPath}/`, `${vault}/`]);
+        return "rsync";
+      } catch (e) {
+        console.warn("[Updater Plugin] rsync restore unavailable, fallback:", e);
+      }
+    }
+    await this.restoreDirectoryExactFallback(snapshotPath, vault);
+    return "JavaScript";
+  }
+
+  reloadObsidianAfterRestore() {
+    new Notice("Хранилище восстановлено. Перезагружаю Obsidian…", 5000);
+    setTimeout(() => {
+      try { window.location.reload(); }
+      catch (e) {
+        console.error("[Updater Plugin] reload failed:", e);
+        new Notice("Перезапусти Obsidian вручную, чтобы полностью применить восстановленное состояние.", 10000);
+      }
+    }, 500);
+  }
+
+  async handleRestoreAction() {
+    if (this._restoreBusy) { new Notice("Восстановление уже выполняется."); return; }
+    this._restoreBusy = true;
+    try {
+      const state = await this.readRestoreState();
+      if (state.mode === "redo" && state.forwardPath) {
+        new Notice("Возвращаю хранилище вперёд…");
+        await this.restoreVaultFromSnapshot(state.forwardPath);
+        try { await fsp.rm(state.forwardPath, { recursive: true, force: true }); } catch {}
+        await this.clearRestoreState();
+        await this.refreshRestoreActions();
+        this.reloadObsidianAfterRestore();
+        return;
+      }
+
+      const backups = await this.listUpdateBackups();
+      if (!backups.length) { new Notice("Нет резервной копии, к которой можно откатить хранилище.", 8000); return; }
+      const target = backups[0];
+
+      new Notice("Сохраняю текущее состояние для возврата вперёд…");
+      const forwardPath = await this.createSnapshotForRestore("before-rollback-forward");
+      await this.writeRestoreState({ mode: "redo", forwardPath, rollbackSource: target, createdAt: new Date().toISOString() });
+
+      new Notice("Откатываю хранилище к последней резервной копии…");
+      try {
+        await this.restoreVaultFromSnapshot(target);
+      } catch (restoreError) {
+        new Notice("Откат не удался. Возвращаю исходное состояние…", 8000);
+        try {
+          await this.restoreVaultFromSnapshot(forwardPath);
+          await this.clearRestoreState();
+          await fsp.rm(forwardPath, { recursive: true, force: true });
+        } catch (recoveryError) {
+          console.error("[Updater Plugin] emergency restore failed:", recoveryError);
+        }
+        throw restoreError;
+      }
+
+      await this.refreshRestoreActions();
+      this.reloadObsidianAfterRestore();
+    } catch (e) {
+      console.error("[Updater Plugin] vault restore failed:", e);
+      new Notice(`Ошибка восстановления: ${e.message}`, 12000);
+    } finally {
+      this._restoreBusy = false;
+    }
   }
 
   async loadSettings() {
