@@ -1,9 +1,9 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "minAppVersion": "1.5.0",
-  "description": "One-button updater with central registry, vault rollback/redo and reliable self-update.",
+  "description": "Auto-discovers every Obsidian plugin folder in a central GitHub repository, with backup, rollback/redo and self-update.",
   "author": "volnexx",
   "isDesktopOnly": true
 }

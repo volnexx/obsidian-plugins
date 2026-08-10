@@ -7,7 +7,6 @@ const { spawn } = require("child_process");
 const DEFAULT_SETTINGS = {
   registryRepo: "volnexx/obsidian-plugins",
   registryBranch: "centralize-plugins",
-  registryPath: "registry.json",
   backupRoot: "",
   keepBackups: 10,
   fastBackup: true
@@ -68,7 +67,7 @@ class UpdaterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Центральный репозиторий")
-      .setDesc("Репозиторий с registry.json.")
+      .setDesc("Репозиторий, в корне которого лежат папки наших плагинов.")
       .addText(t => t
         .setValue(this.plugin.settings.registryRepo)
         .onChange(async v => {
@@ -77,20 +76,11 @@ class UpdaterSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName("Ветка реестра")
+      .setName("Ветка плагинов")
       .addText(t => t
         .setValue(this.plugin.settings.registryBranch)
         .onChange(async v => {
           this.plugin.settings.registryBranch = v.trim() || "main";
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName("Путь к реестру")
-      .addText(t => t
-        .setValue(this.plugin.settings.registryPath)
-        .onChange(async v => {
-          this.plugin.settings.registryPath = v.trim() || "registry.json";
           await this.plugin.saveSettings();
         }));
 
@@ -125,7 +115,7 @@ class UpdaterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Обновить всё")
-      .setDesc("Один реестр → одна резервная копия → обновление всех найденных наших плагинов.")
+      .setDesc("Сканирование всех папок репозитория → одна резервная копия → обновление всех установленных наших плагинов.")
       .addButton(b => b
         .setButtonText("Обновить всё")
         .setCta()
@@ -429,29 +419,46 @@ module.exports = class UpdaterPlugin extends Plugin {
     return r.text;
   }
 
-  async fetchRegistry() {
+  async githubJson(url) {
+    const r = await requestUrl({
+      url,
+      method: "GET",
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Updater-Plugin"
+      }
+    });
+    if (r.status < 200 || r.status >= 300) throw new Error(`GitHub API HTTP ${r.status}`);
+    return r.json;
+  }
+
+  async listRepositoryPluginFolders() {
     const started = Date.now();
+    const [owner, repo] = String(this.settings.registryRepo || "").split("/");
+    if (!owner || !repo) throw new Error("Центральный репозиторий должен быть owner/repository.");
 
-    const text = await this.rawText(
-      this.settings.registryRepo,
-      this.settings.registryBranch,
-      this.settings.registryPath
-    );
+    const branch = this.settings.registryBranch || "main";
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`;
+    const rootItems = await this.githubJson(url);
+    if (!Array.isArray(rootItems)) throw new Error("GitHub не вернул список корня репозитория.");
 
-    let registry;
-    try {
-      registry = JSON.parse(text);
-    } catch {
-      throw new Error("registry.json содержит некорректный JSON.");
-    }
+    const dirs = rootItems.filter(item => item?.type === "dir" && item?.name && item.name !== ".github" && item.name !== "tools" && !item.name.startsWith("."));
 
-    if (registry?.schemaVersion !== 1 || !Array.isArray(registry.plugins)) {
-      throw new Error("Неподдерживаемый формат registry.json.");
-    }
+    const discovered = (await Promise.all(dirs.map(async dir => {
+      const prefix = `${dir.path.replace(/\/+$/u, "")}/`;
+      try {
+        const [manifestText] = await Promise.all([
+          this.rawText(this.settings.registryRepo, branch, `${prefix}manifest.json`),
+          this.rawText(this.settings.registryRepo, branch, `${prefix}main.js`)
+        ]);
+        const manifest = JSON.parse(manifestText);
+        if (!manifest?.id || !manifest?.version) return null;
+        return { id: manifest.id, name: manifest.name || manifest.id, version: manifest.version, path: dir.path, manifest };
+      } catch { return null; }
+    }))).filter(Boolean);
 
-    const ms = Date.now() - started;
-    new Notice(`Реестр загружен за ${(ms / 1000).toFixed(2)} с. Плагинов: ${registry.plugins.length}.`);
-    return registry;
+    new Notice(`Папок проверено: ${dirs.length}. Плагинов найдено: ${discovered.length}. ${((Date.now()-started)/1000).toFixed(2)} с.`);
+    return discovered;
   }
 
   async readInstalledPlugins() {
@@ -485,25 +492,12 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async resolveRegistryPlugins() {
-    const [registry, installed] = await Promise.all([
-      this.fetchRegistry(),
+    const [remotePlugins, installed] = await Promise.all([
+      this.listRepositoryPluginFolders(),
       this.readInstalledPlugins()
     ]);
-
-    const found = [];
-
-    for (const entry of registry.plugins) {
-      if (!entry?.id || !entry?.version) continue;
-      const local = installed.get(entry.id);
-      if (!local) continue;
-
-      found.push({
-        entry,
-        local
-      });
-    }
-
-    return found;
+    const all = remotePlugins.map(entry => ({ entry, local: installed.get(entry.id) || null }));
+    return { all, installed: all.filter(p => p.local) };
   }
 
   async checkOnly() {
@@ -514,13 +508,14 @@ module.exports = class UpdaterPlugin extends Plugin {
 
     this._busy = true;
     try {
-      const plugins = await this.resolveRegistryPlugins();
+      const discovered = await this.resolveRegistryPlugins();
+      const plugins = discovered.installed;
       const updates = plugins.filter(p =>
         compareVersions(p.entry.version, p.local.version) > 0
       );
 
       if (!updates.length) {
-        new Notice(`Наших установленных плагинов найдено: ${plugins.length}. Обновлений нет.`);
+        new Notice(`В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений нет.`);
         return;
       }
 
@@ -606,17 +601,9 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   sourceFor(entry) {
-    if (entry.sourceRepo) {
-      return {
-        repo: entry.sourceRepo,
-        branch: entry.sourceBranch || "main",
-        prefix: ""
-      };
-    }
-
     return {
       repo: this.settings.registryRepo,
-      branch: this.settings.registryBranch,
+      branch: this.settings.registryBranch || "main",
       prefix: entry.path ? `${entry.path.replace(/\/+$/u, "")}/` : ""
     };
   }
@@ -663,10 +650,11 @@ module.exports = class UpdaterPlugin extends Plugin {
   const started = Date.now();
 
   try {
-    const plugins = await this.resolveRegistryPlugins();
+    const discovered = await this.resolveRegistryPlugins();
+    const plugins = discovered.installed;
 
     if (!plugins.length) {
-      new Notice("Ни один установленный наш плагин не найден в центральном реестре.");
+      new Notice(`В репозитории найдено: ${discovered.all.length}; локально установлено: 0.`);
       return;
     }
 
@@ -675,7 +663,7 @@ module.exports = class UpdaterPlugin extends Plugin {
     );
 
     if (!updates.length) {
-      new Notice(`Проверено ${plugins.length}. Обновлений нет.`);
+      new Notice(`В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений нет.`);
       return;
     }
 
