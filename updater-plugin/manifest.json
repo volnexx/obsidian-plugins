@@ -1,9 +1,9 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "minAppVersion": "1.5.0",
-  "description": "Auto-discovers all plugin folders in the central repository, with non-fatal manifest cache refresh, safe self-update, backup and vault rollback/redo.",
+  "description": "Stable updater build: auto-discovers plugin folders in the central repository, with safe self-update and backup.",
   "author": "volnexx",
   "isDesktopOnly": true
 }
