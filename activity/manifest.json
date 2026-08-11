@@ -1,0 +1,9 @@
+{
+  "id": "activity",
+  "name": "Activity",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Считает активное время в Obsidian, время и открытия заметок и предоставляет статистику другим плагинам.",
+  "author": "volnexx",
+  "isDesktopOnly": false
+}
