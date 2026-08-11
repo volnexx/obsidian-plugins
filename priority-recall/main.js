@@ -466,6 +466,7 @@ var QueueView = class extends import_obsidian.ItemView {
   }
   refresh(force = false) {
     const now = Date.now();
+    const activeSource = this.plugin.getActiveDefinitionSource();
     const partition = partitionCardsByPriority(
       this.plugin.cards,
       this.plugin.urgentSourcePaths,
@@ -475,7 +476,8 @@ var QueueView = class extends import_obsidian.ItemView {
     const { pinnedAvailable, urgentAvailable, regularAvailable, upcoming } = partition;
     const availableCount = pinnedAvailable.length + urgentAvailable.length + regularAvailable.length;
     const cardSignature = (card) => `${card.id}@${card.dueAt}`;
-    const signature = `pinned:${pinnedAvailable.map(cardSignature).join(",")}|urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned-ids:${[...this.plugin.pinnedCardIds].sort().join(",")}`;
+    const activeSourceSignature = activeSource ? `${activeSource.path}@${this.plugin.isUrgentSource(activeSource.path) ? "urgent" : "regular"}` : "none";
+    const signature = `active-source:${activeSourceSignature}|pinned:${pinnedAvailable.map(cardSignature).join(",")}|urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned-ids:${[...this.plugin.pinnedCardIds].sort().join(",")}`;
     if (!force && signature === this.structureSignature) {
       this.updateTimeLabels(now);
       return;
@@ -524,6 +526,7 @@ var QueueView = class extends import_obsidian.ItemView {
       this.searchQuery = search.value;
       this.applySearchFilter();
     });
+    if (activeSource) this.createActiveSourcePrompt(root, activeSource);
     if (pinnedAvailable.length > 0) {
       this.createSection(
         root,
@@ -569,6 +572,36 @@ var QueueView = class extends import_obsidian.ItemView {
     );
     this.applySearchFilter();
     root.scrollTop = previousScroll;
+  }
+  createActiveSourcePrompt(root, source) {
+    const isUrgent = this.plugin.isUrgentSource(source.path);
+    const entry = root.createDiv({ cls: "tir-card-entry tir-active-source-prompt" });
+    const content = entry.createEl("button", {
+      cls: "tir-term-button tir-active-source-button",
+      attr: {
+        type: "button",
+        "aria-label": `\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u0435\u0440\u0432\u0443\u044E \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 ${source.title}`,
+        title: `\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u0435\u0440\u0432\u0443\u044E \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 ${source.title}`
+      }
+    });
+    createScrollingTerm(content, `${source.title} \u2013 ?`);
+    content.addEventListener("click", () => {
+      void this.plugin.openCard(source.cardId);
+    });
+    const actions = entry.createDiv({ cls: "tir-entry-actions" });
+    const toggle = actions.createEl("button", {
+      cls: isUrgent ? "tir-urgent-toggle tir-multi-pin-toggle tir-active-source-toggle is-active" : "tir-urgent-toggle tir-multi-pin-toggle tir-active-source-toggle",
+      attr: {
+        type: "button",
+        "aria-label": isUrgent ? `\u0423\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${source.title} \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445` : `\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 ${source.title} \u0432 \u0441\u0440\u043E\u0447\u043D\u044B\u0435`,
+        "aria-pressed": String(isUrgent),
+        title: isUrgent ? "\u0423\u0431\u0440\u0430\u0442\u044C \u0442\u0435\u043A\u0443\u0449\u0443\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0438\u0437 \u0441\u0440\u043E\u0447\u043D\u044B\u0445" : "\u0421\u0434\u0435\u043B\u0430\u0442\u044C \u0432\u0441\u044E \u0442\u0435\u043A\u0443\u0449\u0443\u044E \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0441\u0440\u043E\u0447\u043D\u043E\u0439"
+      }
+    });
+    renderMultiPinIcon(toggle, isUrgent);
+    toggle.addEventListener("click", () => {
+      void this.plugin.toggleUrgentSource(source.path);
+    });
   }
   tick() {
     this.refresh(false);
@@ -1078,6 +1111,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   cards = [];
   urgentSourcePaths = /* @__PURE__ */ new Set();
   pinnedCardIds = /* @__PURE__ */ new Set();
+  activeSourcePath = null;
   fileStates = {};
   settings = { ...DEFAULT_SETTINGS };
   modifyTimers = /* @__PURE__ */ new Map();
@@ -1089,6 +1123,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   disposed = false;
   async onload() {
     await this.loadPluginData();
+    this.rememberActiveSource(this.app.workspace.getActiveFile());
     this.addSettingTab(new TermIntervalReviewSettingTab(this.app, this));
     this.registerView(QUEUE_VIEW_TYPE, (leaf) => new QueueView(leaf, this));
     this.registerView(CARD_VIEW_TYPE, (leaf) => new ReviewView(leaf, this));
@@ -1112,6 +1147,11 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         this.tickViews();
       }, 1e3)
     );
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        this.rememberActiveSource(file);
+      })
+    );
     this.app.workspace.onLayoutReady(() => {
       void this.initializeWorkspace();
     });
@@ -1129,6 +1169,23 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   }
   getCard(id) {
     return this.cards.find((card) => card.id === id);
+  }
+  rememberActiveSource(file) {
+    if (file === null) return;
+    const nextPath = file instanceof import_obsidian.TFile && file.extension === "md" ? file.path : null;
+    if (nextPath === this.activeSourcePath) return;
+    this.activeSourcePath = nextPath;
+    this.refreshViews(true);
+  }
+  getActiveDefinitionSource() {
+    const path = this.activeSourcePath;
+    if (path === null) return null;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") return null;
+    const cards = this.cards.filter((card) => card.sourcePath === path).sort(compareCardsByDueTime);
+    const firstCard = cards[0];
+    if (!firstCard) return null;
+    return { path, title: file.basename, cardId: firstCard.id };
   }
   isUrgentSource(path) {
     return this.urgentSourcePaths.has(path);
@@ -1413,6 +1470,8 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   async handleDelete(file) {
     const path = file.path;
     const prefix = file instanceof import_obsidian.TFolder ? `${path}/` : null;
+    const activeSourceDeleted = this.activeSourcePath === path || prefix !== null && this.activeSourcePath !== null && this.activeSourcePath.startsWith(prefix);
+    if (activeSourceDeleted) this.activeSourcePath = null;
     const before = this.cards.length;
     this.cards = this.cards.filter(
       (card) => card.sourcePath !== path && (prefix === null || !card.sourcePath.startsWith(prefix))
@@ -1439,9 +1498,9 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         pinnedChanged = true;
       }
     }
-    if (before !== this.cards.length || stateChanged || urgentChanged || pinnedChanged) {
+    if (before !== this.cards.length || stateChanged || urgentChanged || pinnedChanged || activeSourceDeleted) {
       await this.persistNow();
-      if (before !== this.cards.length || urgentChanged || pinnedChanged) {
+      if (before !== this.cards.length || urgentChanged || pinnedChanged || activeSourceDeleted) {
         this.refreshViews(true);
         this.refreshReviewPriorityControls();
       }
@@ -1451,6 +1510,11 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     let changed = false;
     const oldPrefix = file instanceof import_obsidian.TFolder ? `${oldPath}/` : null;
     const newPrefix = file instanceof import_obsidian.TFolder ? `${file.path}/` : null;
+    if (this.activeSourcePath === oldPath) {
+      this.activeSourcePath = file.path;
+    } else if (oldPrefix && newPrefix && this.activeSourcePath?.startsWith(oldPrefix)) {
+      this.activeSourcePath = `${newPrefix}${this.activeSourcePath.slice(oldPrefix.length)}`;
+    }
     for (const card of this.cards) {
       if (card.sourcePath === oldPath) {
         card.sourcePath = file.path;
