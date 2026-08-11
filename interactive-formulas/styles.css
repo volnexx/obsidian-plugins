@@ -1,0 +1,199 @@
+.ifm-host {
+  display: block;
+  width: 100%;
+}
+
+.ifm-root {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: var(--text-normal);
+}
+
+.ifm-formula {
+  margin: 0 0 var(--size-4-3);
+  color: var(--text-normal);
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ifm-formula mjx-container {
+  margin: 0 !important;
+}
+
+.ifm-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  margin-top: var(--size-4-2);
+}
+
+.ifm-control {
+  display: grid;
+  grid-template-columns: minmax(1.5rem, auto) minmax(0, 1fr) minmax(3rem, auto);
+  align-items: center;
+  gap: var(--size-4-2);
+  width: 100%;
+}
+
+.ifm-variable {
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-style: italic;
+  text-align: left;
+}
+
+.ifm-slider {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--interactive-accent);
+}
+
+.ifm-value {
+  min-width: 3rem;
+  color: var(--text-normal);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ifm-visual {
+  width: 100%;
+}
+
+.ifm-visual-grid {
+  display: block;
+}
+
+.ifm-visual-panel {
+  min-width: 0;
+}
+
+.ifm-svg {
+  display: block;
+  max-width: 360px;
+  margin: 0 auto;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ifm-shape-visible,
+.ifm-shape-hidden,
+.ifm-measure {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.ifm-shape-visible {
+  stroke: var(--interactive-accent);
+  stroke-width: 2;
+}
+
+.ifm-cylinder-region,
+.ifm-cylinder-hit {
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.ifm-cylinder-region {
+  fill: transparent;
+  transition: fill 140ms ease, filter 140ms ease;
+}
+
+.ifm-cylinder-hit {
+  fill: transparent;
+  stroke: transparent;
+  transition: fill 140ms ease, filter 140ms ease;
+}
+
+.ifm-cylinder-side-hit.ifm-cylinder-region-active {
+  fill: color-mix(in srgb, var(--interactive-accent) 13%, transparent);
+}
+
+.ifm-cylinder-base-hit.ifm-cylinder-region-active,
+.ifm-cylinder-region.ifm-cylinder-region-active {
+  fill: color-mix(in srgb, var(--interactive-accent) 20%, transparent);
+  stroke: var(--interactive-accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--interactive-accent) 45%, transparent));
+}
+
+.ifm-inspecting .ifm-formula {
+  position: relative;
+  z-index: 2;
+}
+
+.ifm-inspecting .ifm-control {
+  opacity: 0.16;
+  transition: opacity 140ms ease;
+}
+
+.ifm-inspecting .ifm-svg > :not(.ifm-cylinder-region-active) {
+  opacity: 0.16;
+  transition: opacity 140ms ease;
+}
+
+.ifm-inspecting .ifm-svg > .ifm-cylinder-region-active {
+  opacity: 1;
+}
+
+.ifm-inspection-dimmed {
+  opacity: 0.14 !important;
+  transition: opacity 140ms ease !important;
+}
+
+.ifm-shape-hidden {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+}
+
+.ifm-measure {
+  stroke: var(--text-normal);
+  stroke-width: 1;
+}
+
+.ifm-point {
+  fill: var(--text-normal);
+  stroke: none;
+}
+
+.ifm-svg-text {
+  fill: var(--text-normal);
+  stroke: none;
+  font-family: var(--font-interface);
+  font-size: 11px;
+}
+
+.ifm-error {
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-error);
+  border-radius: var(--radius-m);
+  color: var(--text-error);
+}
+
+.ifm-live-widget {
+  position: relative;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cm-line.ifm-source-line-hidden {
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border: 0 !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  visibility: hidden;
+}
+
+.cm-line.ifm-source-line-hidden > * {
+  display: none !important;
+}
