@@ -48,6 +48,12 @@
       "name": "Parsing",
       "version": "0.10.0",
       "path": "parsing"
+    },
+    {
+      "id": "omnisearch",
+      "name": "Search",
+      "version": "1.30.2",
+      "path": "search"
     }
   ]
 }

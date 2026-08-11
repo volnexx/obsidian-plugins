@@ -1,0 +1,10 @@
+{
+	"id": "omnisearch",
+	"name": "Search",
+	"version": "1.30.2",
+	"minAppVersion": "1.7.2",
+	"description": "Поиск по хранилищу с безусловным приоритетом точного совпадения названия.",
+	"author": "Simon Cambier, modified by volnexx",
+	"authorUrl": "https://github.com/volnexx",
+	"isDesktopOnly": false
+}
