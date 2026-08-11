@@ -5,7 +5,16 @@
 .razbor-title { font-size: 12px; font-weight: 700; letter-spacing: .22em; }
 .razbor-progress { font-size: 12px; font-variant-numeric: tabular-nums; }
 .razbor-line-stage { width: min(980px, 100%); align-self: center; display: grid; grid-template-columns: 58px minmax(0, 820px) 58px; align-items: center; gap: 16px; margin-bottom: 44px; }
+.razbor-line-column { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.razbor-create-note-row { display: none; }
+.razbor-create-note-row.is-open { display: block; }
+.razbor-create-note-input { width: 100%; height: 48px; padding: 0 16px !important; border: 1px solid var(--interactive-accent) !important; border-radius: 12px !important; background: var(--background-secondary) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 20%, transparent) !important; font-size: 16px; }
 .razbor-line-card { position: relative; width: 100%; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 28px 58px; border: 1px solid var(--background-modifier-border); border-radius: 18px; background: var(--background-secondary); box-shadow: 0 16px 50px rgba(0,0,0,.14); }
+.razbor-create-button { position: absolute; top: 12px; left: 12px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.razbor-create-button:hover { background: color-mix(in srgb, var(--interactive-accent) 14%, transparent); color: var(--text-accent); }
+.razbor-create-button svg { width: 18px; height: 18px; }
+.razbor-create-key { position: absolute; top: 39px; left: 0; color: var(--text-faint); font-size: 8px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.razbor-create-button:hover .razbor-create-key { opacity: 1; }
 .razbor-delete-button { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: var(--text-faint); cursor: pointer; }
 .razbor-delete-button:hover { background: color-mix(in srgb, var(--text-error) 14%, transparent); color: var(--text-error); }
 .razbor-delete-button svg { width: 18px; height: 18px; }

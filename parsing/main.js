@@ -151,6 +151,8 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
   inputEl = null;
   suggestionEl = null;
   lineEl = null;
+  createNoteRowEl = null;
+  createNoteInputEl = null;
   progressEl = null;
   previousButton = null;
   nextButton = null;
@@ -229,7 +231,9 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
     this.progressEl = header.createDiv({ cls: "razbor-progress" });
     const lineStage = shell.createDiv({ cls: "razbor-line-stage" });
     this.previousButton = this.createNavigationButton(lineStage, "left", "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "Ctrl+Shift+H", () => this.navigate(-1));
-    this.lineEl = lineStage.createDiv({ cls: "razbor-line-card" });
+    const lineColumn = lineStage.createDiv({ cls: "razbor-line-column" });
+    this.createNoteRowEl = lineColumn.createDiv({ cls: "razbor-create-note-row" });
+    this.lineEl = lineColumn.createDiv({ cls: "razbor-line-card" });
     this.nextButton = this.createNavigationButton(lineStage, "right", "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "Ctrl+Shift+L", () => this.navigate(1));
     const controls = shell.createDiv({ cls: "razbor-controls" });
     const left = controls.createDiv({ cls: "razbor-side razbor-side-left" });
@@ -282,6 +286,7 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
     if (!this.lineEl || !this.progressEl) return;
     const current = this.lines[this.index];
     this.lineEl.empty();
+    this.closeCreateNoteInput(false);
     this.progressEl.setText(`${Math.min(this.index + 1, this.lines.length)} / ${this.lines.length}`);
     if (!current) {
       this.lineEl.addClass("is-finished");
@@ -291,6 +296,16 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       return;
     }
     this.lineEl.removeClass("is-finished");
+    const createButton = this.lineEl.createEl("button", {
+      cls: "razbor-create-button",
+      attr: {
+        "aria-label": "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 (Ctrl+Shift+Enter)",
+        title: "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u2014 Ctrl+Shift+Enter"
+      }
+    });
+    (0, import_obsidian.setIcon)(createButton, "file-plus-2");
+    createButton.createSpan({ cls: "razbor-create-key", text: "Ctrl+Shift+Enter" });
+    createButton.addEventListener("click", () => this.openCreateNoteInput());
     const deleteButton = this.lineEl.createEl("button", {
       cls: "razbor-delete-button",
       attr: {
@@ -316,6 +331,84 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
     if (this.inputEl) this.inputEl.disabled = false;
     this.updateNavigationButtons();
     void this.renderSuggestions();
+  }
+  openCreateNoteInput() {
+    if (!this.lines[this.index] || !this.createNoteRowEl) return;
+    if (this.createNoteInputEl) {
+      this.createNoteInputEl.focus();
+      return;
+    }
+    this.createNoteRowEl.empty();
+    this.createNoteRowEl.addClass("is-open");
+    this.createNoteInputEl = this.createNoteRowEl.createEl("input", {
+      cls: "razbor-create-note-input",
+      attr: {
+        type: "text",
+        placeholder: "\u041D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u043D\u043E\u0432\u043E\u0439 \u0437\u0430\u043C\u0435\u0442\u043A\u0438\u2026",
+        autocomplete: "off",
+        spellcheck: "false"
+      }
+    });
+    this.createNoteInputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.createNoteAndAssign();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeCreateNoteInput();
+      }
+    });
+    this.createNoteInputEl.focus();
+  }
+  closeCreateNoteInput(focusSearch = true) {
+    this.createNoteInputEl = null;
+    this.createNoteRowEl?.empty();
+    this.createNoteRowEl?.removeClass("is-open");
+    if (focusSearch) this.inputEl?.focus();
+  }
+  async createNoteAndAssign() {
+    const current = this.lines[this.index];
+    const rawName = this.createNoteInputEl?.value.trim() ?? "";
+    if (!current || !rawName) {
+      new import_obsidian.Notice("\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0435 \u043D\u043E\u0432\u043E\u0439 \u0437\u0430\u043C\u0435\u0442\u043A\u0438");
+      return;
+    }
+    const withoutExtension = rawName.replace(/\.md$/i, "").trim();
+    if (!withoutExtension || /[\\:*?"<>|]/.test(withoutExtension)) {
+      new import_obsidian.Notice("\u0412 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u0435\u0441\u0442\u044C \u043D\u0435\u0434\u043E\u043F\u0443\u0441\u0442\u0438\u043C\u044B\u0435 \u0441\u0438\u043C\u0432\u043E\u043B\u044B");
+      return;
+    }
+    const path = (0, import_obsidian.normalizePath)(`${withoutExtension}.md`);
+    if (this.app.vault.getAbstractFileByPath(path)) {
+      new import_obsidian.Notice("\u0417\u0430\u043C\u0435\u0442\u043A\u0430 \u0441 \u0442\u0430\u043A\u0438\u043C \u0438\u043C\u0435\u043D\u0435\u043C \u0443\u0436\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442");
+      this.createNoteInputEl?.focus();
+      return;
+    }
+    try {
+      const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      if (parentPath) await this.ensureFolder(parentPath);
+      await this.app.vault.create(path, `${current.text}
+`);
+      if (this.plugin.settings.deleteFromSource) await this.removeFromSource(current.original);
+      this.closeCreateNoteInput(false);
+      this.index += 1;
+      this.updateCurrentLine();
+      this.inputEl?.focus();
+    } catch (error) {
+      console.error("Parsing: \u043E\u0448\u0438\u0431\u043A\u0430 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F \u0437\u0430\u043C\u0435\u0442\u043A\u0438", error);
+      new import_obsidian.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0437\u0430\u043C\u0435\u0442\u043A\u0443");
+      this.createNoteInputEl?.focus();
+    }
+  }
+  async ensureFolder(folderPath) {
+    const parts = (0, import_obsidian.normalizePath)(folderPath).split("/").filter(Boolean);
+    let current = "";
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
+    }
   }
   navigate(offset) {
     const nextIndex = this.index + offset;
@@ -449,6 +542,7 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
   }
   onKeyDown(event) {
     if (!this.isActiveView()) return;
+    if (event.target === this.createNoteInputEl) return;
     const target = event.target;
     const isTextTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLElement && target.isContentEditable;
     if (!isTextTarget && !event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
@@ -476,6 +570,12 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       event.preventDefault();
       event.stopPropagation();
       void this.deleteCurrentLine();
+      return;
+    }
+    if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.openCreateNoteInput();
       return;
     }
     if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
