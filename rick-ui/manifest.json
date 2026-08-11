@@ -1,0 +1,9 @@
+{
+  "id": "rick-ui",
+  "name": "Rick UI",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "A dense Rick-inspired instrument-panel interface layer for Obsidian.",
+  "author": "volnexx",
+  "isDesktopOnly": false
+}
