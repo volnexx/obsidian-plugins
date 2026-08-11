@@ -28,7 +28,6 @@ var SHORTCUTS = ["A", "S", "D", "J", "K", ";"];
 var SHORTCUT_CODES = ["KeyA", "KeyS", "KeyD", "KeyJ", "KeyK", "Semicolon"];
 var DEFAULT_SETTINGS = {
   pinnedNotes: ["", "", "", "", "", ""],
-  deleteFromSource: false,
   activityPluginId: "activity"
 };
 var RazborPlugin = class extends import_obsidian.Plugin {
@@ -390,9 +389,9 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       if (parentPath) await this.ensureFolder(parentPath);
       await this.app.vault.create(path, `${current.text}
 `);
-      if (this.plugin.settings.deleteFromSource) await this.removeFromSource(current.original);
+      await this.removeFromSource(current.original);
       this.closeCreateNoteInput(false);
-      this.index += 1;
+      this.removeCurrentFromQueue();
       this.updateCurrentLine();
       this.inputEl?.focus();
     } catch (error) {
@@ -507,8 +506,8 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       const targetContent = await this.app.vault.cachedRead(target);
       const formattedText = formatForPerspectivism(text, targetContent);
       await this.app.vault.process(target, (content) => appendLine(content, formattedText));
-      if (this.plugin.settings.deleteFromSource) await this.removeFromSource(current.original);
-      this.index += 1;
+      await this.removeFromSource(current.original);
+      this.removeCurrentFromQueue();
       this.updateCurrentLine();
       this.inputEl?.focus();
     } catch (error) {
@@ -526,6 +525,10 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       if (index >= 0) lines.splice(index, 1);
       return lines.join(eol);
     });
+  }
+  removeCurrentFromQueue() {
+    this.lines.splice(this.index, 1);
+    if (this.index >= this.lines.length && this.lines.length > 0) this.index = this.lines.length - 1;
   }
   async deleteCurrentLine() {
     const current = this.lines[this.index];
@@ -615,10 +618,6 @@ var RazborSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       }));
     }
-    new import_obsidian.Setting(containerEl).setName("\u0423\u0434\u0430\u043B\u044F\u0442\u044C \u0440\u0430\u0441\u043F\u0440\u0435\u0434\u0435\u043B\u0451\u043D\u043D\u044B\u0435 \u0441\u0442\u0440\u043E\u043A\u0438 \u0438\u0437 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u0439 \u0437\u0430\u043C\u0435\u0442\u043A\u0438").setDesc("\u0412\u043A\u043B\u044E\u0447\u0430\u0435\u0442 \u043D\u0430\u0441\u0442\u043E\u044F\u0449\u0438\u0439 \u043F\u0435\u0440\u0435\u043D\u043E\u0441. \u0412 \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u043E\u043C \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0438 \u0441\u0442\u0440\u043E\u043A\u0438 \u043A\u043E\u043F\u0438\u0440\u0443\u044E\u0442\u0441\u044F.").addToggle((toggle) => toggle.setValue(this.plugin.settings.deleteFromSource).onChange(async (value) => {
-      this.plugin.settings.deleteFromSource = value;
-      await this.plugin.saveSettings();
-    }));
     new import_obsidian.Setting(containerEl).setName("\u0418\u0434\u0435\u043D\u0442\u0438\u0444\u0438\u043A\u0430\u0442\u043E\u0440 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 Activity").setDesc("\u041F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E: activity").addText((text) => text.setValue(this.plugin.settings.activityPluginId).onChange(async (value) => {
       this.plugin.settings.activityPluginId = value.trim() || "activity";
       await this.plugin.saveSettings();
