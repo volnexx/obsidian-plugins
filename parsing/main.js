@@ -505,7 +505,9 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
       return;
     }
     try {
-      await this.app.vault.process(target, (content) => appendLine(content, text));
+      const targetContent = await this.app.vault.cachedRead(target);
+      const formattedText = formatForPerspectivism(text, targetContent);
+      await this.app.vault.process(target, (content) => appendLine(content, formattedText));
       if (this.plugin.settings.deleteFromSource) await this.removeFromSource(current.original);
       this.index += 1;
       this.updateCurrentLine();
@@ -628,6 +630,17 @@ function appendLine(content, text) {
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
   if (!content.length) return text;
   return `${content.replace(/(?:\r?\n)*$/, "")}${eol}${text}${eol}`;
+}
+function formatForPerspectivism(text, targetContent) {
+  const template = findPerspectivismTemplate(targetContent);
+  return template?.includes("p") ? template.split("p").join(text) : text;
+}
+function findPerspectivismTemplate(content) {
+  const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim().toLocaleLowerCase() === "ppp") return lines[index + 1] ?? "";
+  }
+  return null;
 }
 function cleanExcerpt(excerpt) {
   return excerpt.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
