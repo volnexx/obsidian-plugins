@@ -48,7 +48,10 @@ var RazborPlugin = class extends import_obsidian.Plugin {
         return true;
       }
     });
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.attachHeaderAction()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      this.attachHeaderAction();
+      if (leaf?.view instanceof RazborView) leaf.view.activateKeyboard();
+    }));
     this.app.workspace.onLayoutReady(() => this.attachHeaderAction());
   }
   onunload() {
@@ -136,7 +139,7 @@ var RazborPlugin = class extends import_obsidian.Plugin {
     }
   }
 };
-var RazborView = class extends import_obsidian.ItemView {
+var RazborView = class _RazborView extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -173,11 +176,16 @@ var RazborView = class extends import_obsidian.ItemView {
     return { sourcePath: this.sourcePath };
   }
   async onOpen() {
-    this.containerEl.addEventListener("keydown", this.keyHandler);
+    document.addEventListener("keydown", this.keyHandler, true);
     await this.loadSource();
   }
   async onClose() {
-    this.containerEl.removeEventListener("keydown", this.keyHandler);
+    document.removeEventListener("keydown", this.keyHandler, true);
+  }
+  activateKeyboard() {
+    window.setTimeout(() => {
+      if (this.isActiveView()) this.inputEl?.focus();
+    }, 0);
   }
   async loadSource() {
     const source = this.app.vault.getAbstractFileByPath(this.sourcePath);
@@ -440,6 +448,18 @@ var RazborView = class extends import_obsidian.ItemView {
     }
   }
   onKeyDown(event) {
+    if (!this.isActiveView()) return;
+    const target = event.target;
+    const isTextTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLElement && target.isContentEditable;
+    if (!isTextTarget && !event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
+      event.preventDefault();
+      this.inputEl?.focus();
+      if (this.inputEl) {
+        this.inputEl.value += event.key;
+        this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
     if (!event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       event.stopPropagation();
@@ -466,6 +486,9 @@ var RazborView = class extends import_obsidian.ItemView {
     event.preventDefault();
     event.stopPropagation();
     void this.assign(file);
+  }
+  isActiveView() {
+    return this.app.workspace.getActiveViewOfType(_RazborView) === this;
   }
   renderError(message) {
     this.contentEl.empty();
