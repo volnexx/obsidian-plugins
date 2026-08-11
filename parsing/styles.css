@@ -5,7 +5,12 @@
 .razbor-title { font-size: 12px; font-weight: 700; letter-spacing: .22em; }
 .razbor-progress { font-size: 12px; font-variant-numeric: tabular-nums; }
 .razbor-line-stage { width: min(980px, 100%); align-self: center; display: grid; grid-template-columns: 58px minmax(0, 820px) 58px; align-items: center; gap: 16px; margin-bottom: 44px; }
-.razbor-line-card { width: 100%; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 28px 36px; border: 1px solid var(--background-modifier-border); border-radius: 18px; background: var(--background-secondary); box-shadow: 0 16px 50px rgba(0,0,0,.14); }
+.razbor-line-card { position: relative; width: 100%; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 28px 58px; border: 1px solid var(--background-modifier-border); border-radius: 18px; background: var(--background-secondary); box-shadow: 0 16px 50px rgba(0,0,0,.14); }
+.razbor-delete-button { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.razbor-delete-button:hover { background: color-mix(in srgb, var(--text-error) 14%, transparent); color: var(--text-error); }
+.razbor-delete-button svg { width: 18px; height: 18px; }
+.razbor-delete-key { position: absolute; top: 39px; right: 0; color: var(--text-faint); font-size: 8px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.razbor-delete-button:hover .razbor-delete-key { opacity: 1; }
 .razbor-nav-button { position: relative; width: 52px; height: 72px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--background-modifier-border); border-radius: 14px; background: var(--background-secondary); color: var(--text-muted); cursor: pointer; }
 .razbor-nav-button:hover:not(:disabled) { border-color: var(--interactive-accent); background: var(--background-modifier-hover); color: var(--text-accent); transform: scale(1.04); }
 .razbor-nav-button:disabled { opacity: .2; cursor: default; }
@@ -38,7 +43,7 @@
 @media (max-width: 760px) {
   .razbor-shell { padding: 22px 14px 36px; }
   .razbor-line-stage { grid-template-columns: 42px minmax(0, 1fr) 42px; gap: 8px; margin-bottom: 30px; }
-  .razbor-line-card { min-height: 120px; padding: 20px 12px; }
+  .razbor-line-card { min-height: 120px; padding: 48px 12px 20px; }
   .razbor-nav-button { width: 40px; height: 58px; }
   .razbor-nav-key { display: none; }
   .razbor-controls { grid-template-columns: 1fr 1fr; gap: 14px; }

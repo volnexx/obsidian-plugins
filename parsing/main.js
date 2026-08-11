@@ -24,8 +24,8 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 var VIEW_TYPE = "razbor-view";
-var SHORTCUTS = ["A", "S", "D", "J", "K", "L"];
-var SHORTCUT_CODES = ["KeyA", "KeyS", "KeyD", "KeyJ", "KeyK", "KeyL"];
+var SHORTCUTS = ["A", "S", "D", "J", "K", ";"];
+var SHORTCUT_CODES = ["KeyA", "KeyS", "KeyD", "KeyJ", "KeyK", "Semicolon"];
 var DEFAULT_SETTINGS = {
   pinnedNotes: ["", "", "", "", "", ""],
   deleteFromSource: false,
@@ -220,9 +220,9 @@ var RazborView = class extends import_obsidian.ItemView {
     header.createDiv({ cls: "razbor-title", text: "PARSING" });
     this.progressEl = header.createDiv({ cls: "razbor-progress" });
     const lineStage = shell.createDiv({ cls: "razbor-line-stage" });
-    this.previousButton = this.createNavigationButton(lineStage, "left", "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "\u2190", () => this.navigate(-1));
+    this.previousButton = this.createNavigationButton(lineStage, "left", "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "Ctrl+Shift+H", () => this.navigate(-1));
     this.lineEl = lineStage.createDiv({ cls: "razbor-line-card" });
-    this.nextButton = this.createNavigationButton(lineStage, "right", "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "\u2192", () => this.navigate(1));
+    this.nextButton = this.createNavigationButton(lineStage, "right", "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430", "Ctrl+Shift+L", () => this.navigate(1));
     const controls = shell.createDiv({ cls: "razbor-controls" });
     const left = controls.createDiv({ cls: "razbor-side razbor-side-left" });
     const center = controls.createDiv({ cls: "razbor-center" });
@@ -283,6 +283,16 @@ var RazborView = class extends import_obsidian.ItemView {
       return;
     }
     this.lineEl.removeClass("is-finished");
+    const deleteButton = this.lineEl.createEl("button", {
+      cls: "razbor-delete-button",
+      attr: {
+        "aria-label": "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0441\u0442\u0440\u043E\u043A\u0443 (Ctrl+Shift+Backspace)",
+        title: "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0441\u0442\u0440\u043E\u043A\u0443 \u2014 Ctrl+Shift+Backspace"
+      }
+    });
+    (0, import_obsidian.setIcon)(deleteButton, "trash-2");
+    deleteButton.createSpan({ cls: "razbor-delete-key", text: "Ctrl+Shift+Backspace" });
+    deleteButton.addEventListener("click", () => void this.deleteCurrentLine());
     this.lineEl.createDiv({ cls: "razbor-line-text", text: current.text });
     if (current.directTarget) {
       const target = this.app.vault.getAbstractFileByPath(current.directTarget);
@@ -415,11 +425,37 @@ var RazborView = class extends import_obsidian.ItemView {
       return lines.join(eol);
     });
   }
+  async deleteCurrentLine() {
+    const current = this.lines[this.index];
+    if (!current) return;
+    try {
+      await this.removeFromSource(current.original);
+      this.lines.splice(this.index, 1);
+      if (this.index >= this.lines.length && this.lines.length > 0) this.index = this.lines.length - 1;
+      this.updateCurrentLine();
+      this.inputEl?.focus();
+    } catch (error) {
+      console.error("Parsing: \u043E\u0448\u0438\u0431\u043A\u0430 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u044F \u0441\u0442\u0440\u043E\u043A\u0438", error);
+      new import_obsidian.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0443\u0434\u0430\u043B\u0438\u0442\u044C \u0441\u0442\u0440\u043E\u043A\u0443 \u0438\u0437 \u0438\u0441\u0445\u043E\u0434\u043D\u043E\u0439 \u0437\u0430\u043C\u0435\u0442\u043A\u0438");
+    }
+  }
   onKeyDown(event) {
     if (!event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       event.stopPropagation();
       this.navigate(event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && (event.code === "KeyH" || event.code === "KeyL")) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.navigate(event.code === "KeyH" ? -1 : 1);
+      return;
+    }
+    if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key === "Backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.deleteCurrentLine();
       return;
     }
     if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
