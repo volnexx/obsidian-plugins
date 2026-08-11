@@ -1,7 +1,8 @@
 const { Plugin, PluginSettingTab, Setting } = require('obsidian');
 
-const DEFAULT_SETTINGS = {
-  schemaVersion: 3,
+const VERSION = '0.3.1';
+const DEFAULTS = {
+  schemaVersion: 4,
   glow: 0.78,
   sharpness: 'cut',
   scanlines: false,
@@ -14,41 +15,49 @@ const DEFAULT_SETTINGS = {
   bloom: true
 };
 
+const INLINE_VARS = {
+  '--background-primary': '#000407',
+  '--background-primary-alt': '#020b11',
+  '--background-secondary': '#020b11',
+  '--background-secondary-alt': '#05131d',
+  '--interactive-accent': '#43e9ff',
+  '--text-accent': '#b9fbff',
+  '--background-modifier-border': 'rgba(67,233,255,.24)'
+};
+
 module.exports = class RickUIPlugin extends Plugin {
   async onload() {
-    const saved = await this.loadData();
-    this.settings = this.migrateSettings(saved || {});
-    this.apply();
-    this.addSettingTab(new RickUISettingTab(this.app, this));
-  }
-
-  migrateSettings(saved) {
-    const next = Object.assign({}, DEFAULT_SETTINGS, saved);
-
-    // 0.1/0.2 used a full-interface CRT emphasis. The supplied references show
-    // holographic panels instead, so old installs migrate to local screen texture off.
+    const saved = await this.loadData() || {};
+    this.settings = Object.assign({}, DEFAULTS, saved, { schemaVersion: 4 });
     if (!saved.schemaVersion || saved.schemaVersion < 3) {
-      next.scanlines = false;
-      next.bloom = true;
-      next.schemaVersion = 3;
+      this.settings.scanlines = false;
+      this.settings.bloom = true;
     }
-    return next;
-  }
 
-  onunload() {
-    document.body.classList.remove(
-      'rick-ui',
-      'rick-ui-scanlines',
-      'rick-ui-grid',
-      'rick-ui-animate',
-      'rick-ui-hazards',
-      'rick-ui-segmented',
-      'rick-ui-panel-headers',
-      'rick-ui-bloom'
-    );
-    document.body.removeAttribute('data-rick-sharpness');
-    document.body.removeAttribute('data-rick-accent');
-    document.documentElement.style.removeProperty('--rick-glow-factor');
+    this.runtimeStyle = null;
+    this.bodyObserver = null;
+    this.observedBody = null;
+
+    this.apply();
+    await this.injectStyles();
+
+    this.app.workspace.onLayoutReady(() => {
+      this.apply();
+      void this.injectStyles();
+    });
+    this.registerEvent(this.app.workspace.on('layout-change', () => this.apply()));
+    this.registerDomEvent(window, 'focus', () => this.apply());
+
+    this.addCommand({
+      id: 'reapply-interface',
+      name: 'Переприменить оформление',
+      callback: async () => {
+        this.apply();
+        await this.injectStyles(true);
+      }
+    });
+
+    this.addSettingTab(new RickUISettingTab(this.app, this));
   }
 
   async saveSettings() {
@@ -58,6 +67,12 @@ module.exports = class RickUIPlugin extends Plugin {
 
   apply() {
     const body = document.body;
+    if (!body) return;
+
+    document.documentElement.classList.add('rick-ui-root');
+    document.documentElement.dataset.rickUiVersion = VERSION;
+    document.documentElement.style.setProperty('--rick-glow-factor', String(this.settings.glow));
+
     body.classList.add('rick-ui');
     body.classList.toggle('rick-ui-scanlines', !!this.settings.scanlines);
     body.classList.toggle('rick-ui-grid', !!this.settings.grid);
@@ -68,7 +83,66 @@ module.exports = class RickUIPlugin extends Plugin {
     body.classList.toggle('rick-ui-bloom', !!this.settings.bloom);
     body.dataset.rickSharpness = this.settings.sharpness;
     body.dataset.rickAccent = this.settings.accentMode;
-    document.documentElement.style.setProperty('--rick-glow-factor', String(this.settings.glow));
+    body.dataset.rickUiVersion = VERSION;
+
+    for (const [name, value] of Object.entries(INLINE_VARS)) {
+      body.style.setProperty(name, value, 'important');
+    }
+
+    this.watchBody(body);
+  }
+
+  watchBody(body) {
+    if (this.observedBody === body) return;
+    this.bodyObserver?.disconnect();
+    this.observedBody = body;
+    this.bodyObserver = new MutationObserver(() => {
+      const current = document.body;
+      if (!current) return;
+      if (!current.classList.contains('rick-ui') ||
+          current.dataset.rickAccent !== this.settings.accentMode ||
+          current.dataset.rickSharpness !== this.settings.sharpness) {
+        queueMicrotask(() => this.apply());
+      }
+    });
+    this.bodyObserver.observe(body, {
+      attributes: true,
+      attributeFilter: ['class', 'data-rick-accent', 'data-rick-sharpness']
+    });
+  }
+
+  async injectStyles(force = false) {
+    if (this.runtimeStyle && !force) return;
+    try {
+      const css = await this.app.vault.adapter.read(`${this.manifest.dir}/styles.css`);
+      if (!this.runtimeStyle) {
+        this.runtimeStyle = document.createElement('style');
+        this.runtimeStyle.id = 'rick-ui-runtime-style';
+        document.head.appendChild(this.runtimeStyle);
+      }
+      this.runtimeStyle.textContent = css;
+    } catch (error) {
+      console.error('[Rick UI] Не удалось загрузить styles.css', error);
+    }
+  }
+
+  onunload() {
+    this.bodyObserver?.disconnect();
+    this.runtimeStyle?.remove();
+
+    const body = document.body;
+    if (body) {
+      body.classList.remove('rick-ui', 'rick-ui-scanlines', 'rick-ui-grid', 'rick-ui-animate',
+        'rick-ui-hazards', 'rick-ui-segmented', 'rick-ui-panel-headers', 'rick-ui-bloom');
+      body.removeAttribute('data-rick-sharpness');
+      body.removeAttribute('data-rick-accent');
+      body.removeAttribute('data-rick-ui-version');
+      for (const name of Object.keys(INLINE_VARS)) body.style.removeProperty(name);
+    }
+
+    document.documentElement.classList.remove('rick-ui-root');
+    document.documentElement.removeAttribute('data-rick-ui-version');
+    document.documentElement.style.removeProperty('--rick-glow-factor');
   }
 };
 
@@ -79,119 +153,43 @@ class RickUISettingTab extends PluginSettingTab {
   }
 
   display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl('h2', { text: 'Rick UI' });
-    containerEl.createEl('p', {
-      text: 'Оформление Obsidian по визуальному языку приборов Рика: световые экраны, многослойные рамки, аппаратные элементы и аварийные состояния.'
-    });
+    const p = this.plugin;
+    const c = this.containerEl;
+    c.empty();
+    c.createEl('h2', { text: `Rick UI ${VERSION}` });
+    c.createEl('p', { text: 'Световые экраны, многослойные рамки, аппаратные элементы и аварийные состояния по интерфейсам Рика.' });
 
-    new Setting(containerEl)
-      .setName('Цвет системы')
-      .setDesc('Бирюзовый — основной лабораторный интерфейс; пурпурный — голографические панели; зелёный — терминальные экраны.')
-      .addDropdown(dropdown => dropdown
-        .addOption('cyan', 'Бирюзовый')
-        .addOption('magenta', 'Пурпурный')
-        .addOption('green', 'Зелёный')
-        .setValue(this.plugin.settings.accentMode)
-        .onChange(async value => {
-          this.plugin.settings.accentMode = value;
-          await this.plugin.saveSettings();
-        }));
+    new Setting(c).setName('Цвет системы')
+      .setDesc('Основной цвет световых экранов и активных элементов.')
+      .addDropdown(x => x.addOption('cyan', 'Бирюзовый').addOption('magenta', 'Пурпурный').addOption('green', 'Зелёный')
+        .setValue(p.settings.accentMode).onChange(v => this.set('accentMode', v)));
 
-    new Setting(containerEl)
-      .setName('Сила свечения')
-      .setDesc('Интенсивность внешнего свечения рамок и активных элементов.')
-      .addSlider(slider => slider
-        .setLimits(0, 1.25, 0.05)
-        .setValue(this.plugin.settings.glow)
-        .setDynamicTooltip()
-        .onChange(async value => {
-          this.plugin.settings.glow = value;
-          await this.plugin.saveSettings();
-        }));
+    new Setting(c).setName('Сила свечения')
+      .addSlider(x => x.setLimits(0, 1.25, 0.05).setDynamicTooltip().setValue(p.settings.glow)
+        .onChange(v => this.set('glow', v)));
 
-    new Setting(containerEl)
-      .setName('Форма элементов')
-      .setDesc('Срезанные углы используются на крупных и карточных экранах в примерах.')
-      .addDropdown(dropdown => dropdown
-        .addOption('cut', 'Срезанные углы')
-        .addOption('square', 'Прямые углы')
-        .addOption('soft', 'Небольшое скругление')
-        .setValue(this.plugin.settings.sharpness)
-        .onChange(async value => {
-          this.plugin.settings.sharpness = value;
-          await this.plugin.saveSettings();
-        }));
+    new Setting(c).setName('Форма элементов')
+      .addDropdown(x => x.addOption('cut', 'Срезанные углы').addOption('square', 'Прямые углы').addOption('soft', 'Небольшое скругление')
+        .setValue(p.settings.sharpness).onChange(v => this.set('sharpness', v)));
 
-    new Setting(containerEl)
-      .setName('Световая дымка')
-      .setDesc('Добавляет мягкую полосу преломления внутри крупных световых экранов.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.bloom)
-        .onChange(async value => {
-          this.plugin.settings.bloom = value;
-          await this.plugin.saveSettings();
-        }));
+    const toggles = [
+      ['bloom', 'Световая дымка', 'Мягкое преломление внутри крупных экранов.'],
+      ['hazardAccents', 'Аварийные элементы', 'Красные и янтарные состояния опасных действий.'],
+      ['segmentedControls', 'Сегментированные элементы', 'Деления на кнопках, вкладках и шкалах.'],
+      ['panelHeaders', 'Приборные заголовки', 'Световые полосы заголовков панелей.'],
+      ['grid', 'Техническая сетка', 'Слабая сетка на вспомогательных панелях.'],
+      ['scanlines', 'Строки экрана', 'Локальная текстура всплывающих экранов.'],
+      ['animations', 'Анимации', 'Импульсы индикаторов и проход света.']
+    ];
 
-    new Setting(containerEl)
-      .setName('Аварийные элементы')
-      .setDesc('Красные капсулы и янтарные метки для опасных и подтверждающих действий.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.hazardAccents)
-        .onChange(async value => {
-          this.plugin.settings.hazardAccents = value;
-          await this.plugin.saveSettings();
-        }));
+    for (const [key, name, desc] of toggles) {
+      new Setting(c).setName(name).setDesc(desc)
+        .addToggle(x => x.setValue(!!p.settings[key]).onChange(v => this.set(key, v)));
+    }
+  }
 
-    new Setting(containerEl)
-      .setName('Сегментированные элементы')
-      .setDesc('Добавляет деления на кнопках, вкладках и шкалах как на приборных панелях.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.segmentedControls)
-        .onChange(async value => {
-          this.plugin.settings.segmentedControls = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Приборные заголовки')
-      .setDesc('Оформляет заголовки панелей отдельными световыми полосами.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.panelHeaders)
-        .onChange(async value => {
-          this.plugin.settings.panelHeaders = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Техническая сетка')
-      .setDesc('Очень слабая сетка только на боковом оборудовании интерфейса; заметки не перекрывает.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.grid)
-        .onChange(async value => {
-          this.plugin.settings.grid = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Строки экрана')
-      .setDesc('Локальная текстура только на всплывающих экранах. По умолчанию выключена, потому что на большинстве присланных интерфейсов её нет.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.scanlines)
-        .onChange(async value => {
-          this.plugin.settings.scanlines = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Анимации')
-      .setDesc('Медленный импульс индикатора и редкий проход световой полосы по крупным экранам.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.animations)
-        .onChange(async value => {
-          this.plugin.settings.animations = value;
-          await this.plugin.saveSettings();
-        }));
+  async set(key, value) {
+    this.plugin.settings[key] = value;
+    await this.plugin.saveSettings();
   }
 }
