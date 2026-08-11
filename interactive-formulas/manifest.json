@@ -1,0 +1,9 @@
+{
+  "id": "interactive-formulas",
+  "name": "Interactive Formulas",
+  "version": "0.1.8",
+  "minAppVersion": "1.5.0",
+  "description": "Render formulas with sliders and theme-aware geometric visualizations inside notes.",
+  "author": "mcmarkus",
+  "isDesktopOnly": false
+}
