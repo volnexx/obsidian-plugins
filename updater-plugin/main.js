@@ -115,17 +115,11 @@ class UpdaterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Обновить всё")
-      .setDesc("Один реестр → одна резервная копия → обновление всех найденных наших плагинов.")
+      .setDesc("Одна резервная копия → обновление установленных и установка новых наших плагинов.")
       .addButton(b => b
         .setButtonText("Обновить всё")
         .setCta()
         .onClick(() => this.plugin.safeUpdateAll()));
-
-    new Setting(containerEl)
-      .setName("Проверить обновления")
-      .addButton(b => b
-        .setButtonText("Проверить")
-        .onClick(() => this.plugin.checkOnly()));
   }
 }
 
@@ -149,11 +143,6 @@ module.exports = class UpdaterPlugin extends Plugin {
       callback: () => this.safeUpdateAll()
     });
 
-    this.addCommand({
-      id: "check-all-custom-plugin-updates",
-      name: "Проверить обновления всех наших плагинов",
-      callback: () => this.checkOnly()
-    });
 
     this.addSettingTab(new UpdaterSettingTab(this.app, this));
   }
@@ -459,6 +448,7 @@ module.exports = class UpdaterPlugin extends Plugin {
     return {
       all,
       installed: all.filter(x => x.local && !x.ambiguous),
+      missing: all.filter(x => !x.local && !x.ambiguous),
       ambiguous: all.filter(x => x.ambiguous)
     };
   }
@@ -537,39 +527,30 @@ module.exports = class UpdaterPlugin extends Plugin {
     try {
       const discovered = await this.resolveRegistryPlugins();
       const plugins = discovered.installed;
-
-      const migrated = plugins.filter(p => p.matchedBy !== "id");
-      if (migrated.length) {
-        new Notice(
-          `Найдены переименованные плагины: ${migrated.map(p =>
-            `${p.local.name} (${p.matchedBy})`
-          ).join("; ")}`,
-          8000
-        );
-      }
-
-      if (discovered.ambiguous.length) {
-        new Notice(
-          `Неоднозначных совпадений: ${discovered.ambiguous.length}. Они пропущены.`,
-          8000
-        );
-      }
-
+      const newPlugins = discovered.missing;
       const updates = await this.findUpdates(plugins);
 
-      if (!updates.length) {
-        new Notice(`В репозитории: ${discovered.all.length}; сопоставлено локально: ${plugins.length}; обновлений нет.`);
+      if (!updates.length && !newPlugins.length) {
+        new Notice(
+          `В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений и новых плагинов нет.`
+        );
         return;
       }
 
-      new Notice(
-        `Обновлений: ${updates.length}. ` +
-        updates.map(p => p.updateReason === "files"
-          ? `${p.local.name} ${p.local.version} — файлы отличаются от репозитория`
-          : `${p.local.name} ${p.local.version} → ${p.entry.version}`
-        ).join("; "),
-        12000
-      );
+      const parts = [];
+      if (updates.length) {
+        parts.push(
+          `Обновлений: ${updates.length}. ` +
+          updates.map(p => p.updateReason === "files"
+            ? `${p.local.name} ${p.local.version} — файлы отличаются от репозитория`
+            : `${p.local.name} ${p.local.version} → ${p.entry.version}`
+          ).join("; ")
+        );
+      }
+      if (newPlugins.length) {
+        parts.push(`Новых плагинов: ${newPlugins.length}. ${newPlugins.map(p => p.entry.name).join("; ")}`);
+      }
+      new Notice(parts.join(" "), 12000);
     } catch (e) {
       console.error("[Updater Plugin]", e);
       new Notice(`Ошибка проверки: ${e.message}`, 10000);
@@ -694,9 +675,10 @@ module.exports = class UpdaterPlugin extends Plugin {
     try {
       const discovered = await this.resolveRegistryPlugins();
       const plugins = discovered.installed;
+      const newPlugins = discovered.missing;
 
-      if (!plugins.length) {
-        new Notice(`В репозитории найдено: ${discovered.all.length}; сопоставлено локально: 0.`);
+      if (!plugins.length && !newPlugins.length) {
+        new Notice(`В репозитории найдено: ${discovered.all.length}; доступных плагинов нет.`);
         return;
       }
 
@@ -718,16 +700,24 @@ module.exports = class UpdaterPlugin extends Plugin {
       }
 
       const updates = await this.findUpdates(plugins);
+      const pending = [
+        ...updates,
+        ...newPlugins.map(p => ({ ...p, updateReason: "new" }))
+      ];
 
-      if (!updates.length) {
-        new Notice(`В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений нет.`);
+      if (!pending.length) {
+        new Notice(
+          `В репозитории: ${discovered.all.length}; установлено: ${plugins.length}; обновлений и новых плагинов нет.`
+        );
         return;
       }
 
-      new Notice(`Найдено обновлений: ${updates.length}. Загружаю файлы…`);
+      new Notice(
+        `Обновлений: ${updates.length}; новых плагинов: ${newPlugins.length}. Загружаю файлы…`
+      );
 
       const preparedResults = await Promise.all(
-        updates.map(p =>
+        pending.map(p =>
           this.prepareUpdate(p)
             .then(value => ({ ok: true, value }))
             .catch(error => ({ ok: false, plugin: p, error }))
@@ -736,27 +726,34 @@ module.exports = class UpdaterPlugin extends Plugin {
 
       const failedDownloads = preparedResults.filter(x => !x.ok);
       for (const f of failedDownloads) {
-        new Notice(`${f.plugin.local.name}: ошибка загрузки — ${f.error.message}`, 8000);
+        const name = f.plugin.local?.name || f.plugin.entry.name;
+        new Notice(`${name}: ошибка загрузки — ${f.error.message}`, 8000);
       }
 
       const prepared = preparedResults.filter(x => x.ok).map(x => x.value);
       if (!prepared.length) {
-        new Notice("Ни одно обновление не удалось подготовить.");
+        new Notice("Ни одно изменение не удалось подготовить.");
         return;
       }
 
       const backup = await this.createVaultBackup();
       if (!backup) return;
 
-      const normalUpdates = prepared.filter(p => p.local.id !== this.manifest.id && p.entry.id !== this.manifest.id);
-      const selfUpdate = prepared.find(p => p.local.id === this.manifest.id || p.entry.id === this.manifest.id) || null;
+      const normalChanges = prepared.filter(p => p.entry.id !== this.manifest.id);
+      const selfUpdate = prepared.find(p => p.entry.id === this.manifest.id) || null;
 
       let updated = 0;
+      let installed = 0;
       let failed = failedDownloads.length;
 
-      for (const info of normalUpdates) {
-        if (await this.installPreparedPlugin(info)) updated++;
-        else failed++;
+      for (const info of normalChanges) {
+        if (info.local) {
+          if (await this.installPreparedPlugin(info)) updated++;
+          else failed++;
+        } else {
+          if (await this.installNewPlugin(info)) installed++;
+          else failed++;
+        }
       }
 
       if (selfUpdate) {
@@ -764,17 +761,19 @@ module.exports = class UpdaterPlugin extends Plugin {
         else failed++;
       }
 
+      const changed = updated + installed;
       new Notice(
-        `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с. Обновлено: ${updated}; ошибок: ${failed}. Перезапускаю Obsidian…`,
+        `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с. Обновлено: ${updated}; установлено: ${installed}; ошибок: ${failed}.` +
+        (changed > 0 ? " Перезапускаю Obsidian…" : ""),
         10000
       );
 
-      if (updated > 0) {
+      if (changed > 0) {
         setTimeout(() => {
           try { window.location.reload(); }
           catch (e) {
             console.error("[Updater Plugin] reload after update failed:", e);
-            new Notice("Обновления записаны. Перезапусти Obsidian вручную один раз.", 10000);
+            new Notice("Изменения записаны. Перезапусти Obsidian вручную один раз.", 10000);
           }
         }, 700);
       }
@@ -888,6 +887,98 @@ module.exports = class UpdaterPlugin extends Plugin {
     const next = Array.from(new Set(ids.map(id => id === oldPluginId ? newPluginId : id)));
     await fsp.writeFile(file, JSON.stringify(next, null, 2) + "\n", "utf8");
     return { file, original, changed: true };
+  }
+
+  async addEnabledPluginId(pluginId) {
+    const file = path.join(this.getVaultPath(), ".obsidian", "community-plugins.json");
+    const existed = await exists(file);
+    const original = existed ? await fsp.readFile(file, "utf8") : null;
+
+    let ids = [];
+    if (original !== null) {
+      try { ids = JSON.parse(original); }
+      catch { throw new Error("community-plugins.json содержит некорректный JSON."); }
+    }
+    if (!Array.isArray(ids)) {
+      throw new Error("community-plugins.json должен содержать список плагинов.");
+    }
+    if (ids.includes(pluginId)) {
+      return { file, original, existed, changed: false };
+    }
+
+    await fsp.writeFile(file, JSON.stringify([...ids, pluginId], null, 2) + "\n", "utf8");
+    return { file, original, existed, changed: true };
+  }
+
+  async restoreEnabledPluginIds(state) {
+    if (!state?.changed) return;
+    if (state.existed) await fsp.writeFile(state.file, state.original, "utf8");
+    else await fsp.rm(state.file, { force: true });
+  }
+
+  async installNewPlugin(info) {
+    const { entry, remoteManifest, remoteManifestText, mainJs, stylesCss, hasStyles } = info;
+    const pluginId = String(remoteManifest.id || "").trim();
+    const root = this.getPluginsRoot();
+    let pluginDir = "";
+    let tempDir = "";
+    let installedDirCreated = false;
+    let enabledState = null;
+
+    try {
+      if (!/^[a-z0-9][a-z0-9_-]*$/iu.test(pluginId)) {
+        throw new Error(`Недопустимый ID плагина: ${pluginId || "пусто"}`);
+      }
+
+      pluginDir = path.join(root, pluginId);
+      if (path.dirname(pluginDir) !== root) {
+        throw new Error("Путь установки выходит за пределы папки плагинов.");
+      }
+      if (await exists(pluginDir)) {
+        throw new Error(`Папка ${pluginId} уже существует, но установленный плагин в ней не распознан.`);
+      }
+
+      await fsp.mkdir(root, { recursive: true });
+      tempDir = await fsp.mkdtemp(path.join(root, `.${pluginId}-install-`));
+
+      const writes = [
+        fsp.writeFile(path.join(tempDir, "main.js"), mainJs, "utf8"),
+        fsp.writeFile(path.join(tempDir, "manifest.json"), remoteManifestText, "utf8")
+      ];
+      if (hasStyles) {
+        writes.push(fsp.writeFile(path.join(tempDir, "styles.css"), stylesCss, "utf8"));
+      }
+      await Promise.all(writes);
+
+      const writtenManifest = JSON.parse(await fsp.readFile(path.join(tempDir, "manifest.json"), "utf8"));
+      if (writtenManifest.id !== pluginId || !(await exists(path.join(tempDir, "main.js")))) {
+        throw new Error("Проверка скачанных файлов не пройдена.");
+      }
+
+      await fsp.rename(tempDir, pluginDir);
+      tempDir = "";
+      installedDirCreated = true;
+
+      enabledState = await this.addEnabledPluginId(pluginId);
+      await this.safeRefreshPluginManifestCache(pluginId, remoteManifest);
+
+      new Notice(`${entry.name}: установлен ${remoteManifest.version}; включится после перезапуска Obsidian.`);
+      return true;
+    } catch (e) {
+      console.error("[Updater Plugin] new plugin install failed:", pluginId || entry?.id, e);
+      try { await this.restoreEnabledPluginIds(enabledState); }
+      catch (rollbackError) {
+        console.error("[Updater Plugin] enabled plugins rollback failed:", rollbackError);
+      }
+      try {
+        if (installedDirCreated && pluginDir) await fsp.rm(pluginDir, { recursive: true, force: true });
+        if (tempDir) await fsp.rm(tempDir, { recursive: true, force: true });
+      } catch (rollbackError) {
+        console.error("[Updater Plugin] new plugin files rollback failed:", rollbackError);
+      }
+      new Notice(`${entry?.name || pluginId}: установка не удалась — ${e.message}`, 10000);
+      return false;
+    }
   }
 
   async installPreparedPlugin(info) {
