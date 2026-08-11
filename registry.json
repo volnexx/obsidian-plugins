@@ -34,7 +34,7 @@
     {
       "id": "updater-plugin",
       "name": "Updater Plugin",
-      "version": "0.8.5",
+      "version": "0.9.0",
       "path": "updater-plugin"
     },
     {
