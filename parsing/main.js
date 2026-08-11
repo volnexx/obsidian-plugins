@@ -210,14 +210,13 @@ var RazborView = class _RazborView extends import_obsidian.ItemView {
     if (this.containerEl.isConnected) this.render();
   }
   parseDirectTarget(text) {
-    const separators = [" \u2013 ", " \u2014 "];
-    for (const separator of separators) {
-      const position = text.indexOf(separator);
-      if (position <= 0) continue;
-      const title = text.slice(0, position).trim();
-      const file = this.plugin.resolveNote(title);
-      if (file) return { directTarget: file.path, directText: text.slice(position + separator.length).trim() };
-    }
+    const separators = ["\u2013", "\u2014"];
+    const positions = separators.map((separator) => ({ separator, position: text.indexOf(separator) })).filter(({ position }) => position > 0).sort((a, b) => a.position - b.position);
+    if (positions.length === 0) return {};
+    const { separator, position } = positions[0];
+    const title = text.slice(0, position).trim();
+    const file = this.plugin.resolveNote(title);
+    if (file) return { directTarget: file.path, directText: text.slice(position + separator.length).trim() };
     return {};
   }
   render() {
@@ -629,6 +628,12 @@ var RazborSettingTab = class extends import_obsidian.PluginSettingTab {
 function appendLine(content, text) {
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
   if (!content.length) return text;
+  const lines = content.split(/\r?\n/);
+  const serviceIndex = lines.findIndex((line) => line.trim().toLocaleLowerCase() === "ppp");
+  if (serviceIndex >= 0) {
+    lines.splice(serviceIndex, 0, text);
+    return lines.join(eol);
+  }
   return `${content.replace(/(?:\r?\n)*$/, "")}${eol}${text}${eol}`;
 }
 function formatForPerspectivism(text, targetContent) {
