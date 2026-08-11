@@ -319,10 +319,12 @@ function partitionCards(cards, now) {
   return { available, upcoming };
 }
 function getQueueActivity(cards, now) {
-  const hasWithin = (window2) => cards.some((card) => card.dueAt <= now + window2);
+  const hasUpcomingWithin = (window2) => cards.some(
+    (card) => card.dueAt > now && card.dueAt <= now + window2
+  );
   return {
-    availability: hasWithin(FREE_WINDOW) ? "busy" : "free",
-    pace: hasWithin(REST_WINDOW) ? "work" : "rest"
+    availability: hasUpcomingWithin(FREE_WINDOW) ? "busy" : "free",
+    pace: hasUpcomingWithin(REST_WINDOW) ? "work" : "rest"
   };
 }
 function formatDuration(milliseconds) {

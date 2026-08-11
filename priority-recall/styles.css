@@ -64,15 +64,15 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-activity-calm {
-  border-color: var(--color-green);
-  background: color-mix(in srgb, var(--color-green) 12%, transparent);
-  color: var(--color-green);
+  border-color: color-mix(in srgb, var(--interactive-accent) 55%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 7%, transparent);
+  color: color-mix(in srgb, var(--interactive-accent) 68%, var(--text-normal));
 }
 
 .tir-activity-active {
-  border-color: var(--color-orange);
-  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
-  color: var(--color-orange);
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+  color: var(--interactive-accent);
 }
 
 .tir-count,
