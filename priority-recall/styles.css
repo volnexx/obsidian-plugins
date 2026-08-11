@@ -567,6 +567,31 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   line-height: 1.65;
 }
 
+.tir-list-answer {
+  min-height: 180px;
+}
+
+.tir-definition-list {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.tir-definition-list-item {
+  padding: 7px 10px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+
+.tir-definition-list-item > :first-child {
+  margin-top: 0;
+}
+
+.tir-definition-list-item > :last-child {
+  margin-bottom: 0;
+}
+
 .tir-source-link {
   position: absolute;
   left: 18px;

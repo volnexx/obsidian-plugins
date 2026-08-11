@@ -115,6 +115,20 @@ function createScrollingTerm(container, term) {
 var FENCE_PATTERN = /^\s*(`{3,}|~{3,})/;
 var BOLD_DEFINITION_PATTERN = /\*\*([^*\r\n]+?)\*\*/gu;
 var DEFINITION_DELIMITER = "\u2014";
+var HEADING_PATTERN = /^\s{0,3}#{1,6}[ \t]+(.+?)[ \t]*$/u;
+function parseDefinitionsFromLine(line) {
+  const definitions = [];
+  for (const match of line.matchAll(BOLD_DEFINITION_PATTERN)) {
+    const content = match[1] ?? "";
+    const delimiter = content.indexOf(DEFINITION_DELIMITER);
+    if (delimiter <= 0) continue;
+    const term = content.slice(0, delimiter).trim();
+    const definition = content.slice(delimiter + DEFINITION_DELIMITER.length).trim();
+    if (term.length === 0 || definition.length === 0) continue;
+    definitions.push({ term, definition });
+  }
+  return definitions;
+}
 function parseTermLines(content) {
   const lines = content.split(/\r?\n/u);
   const parsed = [];
@@ -142,19 +156,81 @@ function parseTermLines(content) {
       continue;
     }
     if (fenceCharacter !== null) continue;
-    for (const match of line.matchAll(BOLD_DEFINITION_PATTERN)) {
-      const content2 = match[1] ?? "";
-      const delimiter = content2.indexOf(DEFINITION_DELIMITER);
-      if (delimiter <= 0) continue;
-      const term = content2.slice(0, delimiter).trim();
-      const definition = content2.slice(delimiter + DEFINITION_DELIMITER.length).trim();
-      if (term.length === 0 || definition.length === 0) continue;
+    for (const { term, definition } of parseDefinitionsFromLine(line)) {
       const occurrence = occurrences.get(term) ?? 0;
       occurrences.set(term, occurrence + 1);
-      parsed.push({ term, definition, occurrence, line: index + 1 });
+      parsed.push({ kind: "definition", term, definition, occurrence, line: index + 1 });
     }
   }
   return parsed;
+}
+function parseDefinitionLists(content) {
+  const lines = content.split(/\r?\n/u);
+  const parsed = [];
+  const occurrences = /* @__PURE__ */ new Map();
+  let inFrontmatter = lines[0]?.trim() === "---";
+  let fenceCharacter = null;
+  let fenceLength = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const trimmed = line.trim();
+    if (inFrontmatter) {
+      if (index > 0 && (trimmed === "---" || trimmed === "...")) inFrontmatter = false;
+      continue;
+    }
+    const fence = line.match(FENCE_PATTERN)?.[1];
+    if (fence) {
+      const character = fence[0];
+      if (fenceCharacter === null) {
+        fenceCharacter = character;
+        fenceLength = fence.length;
+      } else if (character === fenceCharacter && fence.length >= fenceLength) {
+        fenceCharacter = null;
+        fenceLength = 0;
+      }
+      continue;
+    }
+    if (fenceCharacter !== null) continue;
+    const headingMatch = line.match(HEADING_PATTERN);
+    if (!headingMatch) continue;
+    const title = (headingMatch[1] ?? "").replace(/[ \t]+#+[ \t]*$/u, "").trim();
+    if (title.length === 0) continue;
+    const occurrence = occurrences.get(title) ?? 0;
+    occurrences.set(title, occurrence + 1);
+    let definitionIndex = index + 1;
+    let definitions = parseDefinitionsFromLine(lines[definitionIndex] ?? "");
+    if (definitions.length === 0) continue;
+    const terms = definitions.map((entry) => entry.term);
+    while (definitionIndex + 1 < lines.length) {
+      let candidateIndex = definitionIndex + 1;
+      if ((lines[candidateIndex] ?? "").trim().length === 0) {
+        candidateIndex += 1;
+        if ((lines[candidateIndex] ?? "").trim().length === 0) break;
+      }
+      definitions = parseDefinitionsFromLine(lines[candidateIndex] ?? "");
+      if (definitions.length === 0) break;
+      terms.push(...definitions.map((entry) => entry.term));
+      definitionIndex = candidateIndex;
+    }
+    if (terms.length < 2) continue;
+    parsed.push({
+      kind: "list",
+      term: title,
+      definition: terms.join("\n"),
+      listTerms: terms,
+      occurrence,
+      line: index + 1
+    });
+  }
+  return parsed;
+}
+function shuffleListTerms(terms) {
+  const shuffled = [...terms];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const otherIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[otherIndex]] = [shuffled[otherIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 // src/scheduler.ts
@@ -429,6 +505,12 @@ function isReviewCard(value) {
   if (!value || typeof value !== "object") return false;
   const card = value;
   return typeof card.id === "string" && typeof card.term === "string" && typeof card.definition === "string" && typeof card.sourcePath === "string" && typeof card.occurrence === "number" && typeof card.stage === "number" && typeof card.dueAt === "number";
+}
+function getCardKind(card) {
+  return card.kind === "list" ? "list" : "definition";
+}
+function hasSameStringItems(left, right) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 function isFileScanState(value) {
   if (!value || typeof value !== "object") return false;
@@ -935,7 +1017,19 @@ var ReviewView = class extends import_obsidian.ItemView {
   async revealAnswer(card, flashcard, actions) {
     if (flashcard.querySelector(".tir-flashcard-definition")) return;
     const definition = flashcard.createDiv({ cls: "tir-flashcard-definition markdown-rendered" });
-    await this.renderMarkdown(formatCardTextForDisplay(card.definition), definition, card.sourcePath);
+    if (getCardKind(card) === "list") {
+      definition.addClass("tir-list-answer");
+      const list = definition.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
+      for (const item of shuffleListTerms(card.listTerms ?? [])) {
+        const row = list.createDiv({
+          cls: "tir-definition-list-item markdown-rendered",
+          attr: { role: "listitem" }
+        });
+        await this.renderMarkdown(formatTermForDisplay(item), row, card.sourcePath);
+      }
+    } else {
+      await this.renderMarkdown(formatCardTextForDisplay(card.definition), definition, card.sourcePath);
+    }
     actions.empty();
     const incorrect = actions.createEl("button", { cls: "tir-answer tir-answer-wrong", text: "\u041D\u0435\u0432\u0435\u0440\u043D\u043E" });
     const correct = actions.createEl("button", { cls: "tir-answer tir-answer-correct", text: "\u0412\u0435\u0440\u043D\u043E" });
@@ -1309,6 +1403,8 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     const now = Date.now();
     this.cards = rawCards.filter(isReviewCard).map((card) => ({
       ...card,
+      kind: getCardKind(card),
+      listTerms: getCardKind(card) === "list" && Array.isArray(card.listTerms) ? card.listTerms.filter((term) => typeof term === "string" && term.length > 0) : void 0,
       stage: clampStage(card.stage),
       dueAt: Number.isFinite(card.dueAt) ? card.dueAt : now + REVIEW_INTERVALS[0],
       createdAt: Number.isFinite(card.createdAt) ? card.createdAt : now,
@@ -1320,7 +1416,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if ((rawVersion === 3 || rawVersion === 4 || rawVersion === 5 || rawVersion === 6 || rawVersion === 7) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if (rawVersion === 8 && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1405,12 +1501,12 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       console.error(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C ${file.path}`, error);
       return { dataChanged: false, cardsChanged: false };
     }
-    const entries = parseTermLines(content);
+    const entries = [...parseTermLines(content), ...parseDefinitionLists(content)];
     const existing = this.cards.filter((card) => card.sourcePath === file.path);
     const normalizeStoredTerm = (term) => formatTermForDisplay(term).replace(/^\s*(?:[-+*]|\d+[.)])\s+/u, "").trim();
     const existingByKey = new Map(
       existing.map((card) => [
-        `${normalizeStoredTerm(card.term)}\0${card.occurrence}`,
+        `${getCardKind(card)}\0${normalizeStoredTerm(card.term)}\0${card.occurrence}`,
         card
       ])
     );
@@ -1418,13 +1514,17 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     const now = Date.now();
     let cardsChanged = false;
     for (const entry of entries) {
-      const card = existingByKey.get(`${entry.term}\0${entry.occurrence}`);
+      const card = existingByKey.get(`${entry.kind}\0${entry.term}\0${entry.occurrence}`);
       if (card) {
-        if (card.term !== entry.term || card.definition !== entry.definition) {
+        const nextListTerms = entry.kind === "list" ? entry.listTerms : void 0;
+        const currentListTerms = Array.isArray(card.listTerms) ? card.listTerms : [];
+        if (card.term !== entry.term || card.definition !== entry.definition || getCardKind(card) !== entry.kind || entry.kind === "list" && !hasSameStringItems(currentListTerms, nextListTerms)) {
           nextForFile.push({
             ...card,
+            kind: entry.kind,
             term: entry.term,
             definition: entry.definition,
+            listTerms: nextListTerms,
             updatedAt: now
           });
           cardsChanged = true;
@@ -1432,8 +1532,10 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       } else {
         const created = {
           id: createId(),
+          kind: entry.kind,
           term: entry.term,
           definition: entry.definition,
+          listTerms: entry.kind === "list" ? entry.listTerms : void 0,
           sourcePath: file.path,
           occurrence: entry.occurrence,
           stage: 0,
@@ -1590,7 +1692,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 7,
+        version: 8,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,
