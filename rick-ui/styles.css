@@ -1,0 +1,571 @@
+/* Rick UI 0.1.0 — visual layer inspired by dense sci-fi control panels. */
+body.rick-ui {
+  --rick-bg: #02070b;
+  --rick-bg-2: #07141b;
+  --rick-panel: #0a2029;
+  --rick-panel-2: #0c303b;
+  --rick-line: #19d7ee;
+  --rick-line-bright: #79f7ff;
+  --rick-green: #70f21a;
+  --rick-magenta: #ff42e6;
+  --rick-red: #ff3a47;
+  --rick-yellow: #ffd94c;
+  --rick-text: #d9fbff;
+  --rick-muted: #75aab3;
+  --rick-border: 1px solid color-mix(in srgb, var(--rick-line) 74%, transparent);
+  --rick-glow: 0 0 calc(5px * var(--rick-glow-factor)) color-mix(in srgb, var(--rick-line) 65%, transparent),
+               inset 0 0 calc(6px * var(--rick-glow-factor)) color-mix(in srgb, var(--rick-line) 12%, transparent);
+
+  --background-primary: var(--rick-bg) !important;
+  --background-primary-alt: #031016 !important;
+  --background-secondary: #041219 !important;
+  --background-secondary-alt: #061a22 !important;
+  --background-modifier-border: #0d7282 !important;
+  --background-modifier-hover: #0b2c36 !important;
+  --background-modifier-active-hover: #104350 !important;
+  --background-modifier-form-field: #06171e !important;
+  --background-modifier-form-field-highlighted: #092733 !important;
+  --interactive-normal: #0a2630 !important;
+  --interactive-hover: #0c3a46 !important;
+  --interactive-accent: var(--rick-line) !important;
+  --interactive-accent-hover: var(--rick-line-bright) !important;
+  --text-normal: var(--rick-text) !important;
+  --text-muted: var(--rick-muted) !important;
+  --text-faint: #477780 !important;
+  --text-on-accent: #001215 !important;
+  --titlebar-background: #02090d !important;
+  --titlebar-background-focused: #020b10 !important;
+  --tab-outline-color: #0d7282 !important;
+  --divider-color: #0b6170 !important;
+  --scrollbar-thumb-bg: #0e7180 !important;
+  --scrollbar-active-thumb-bg: var(--rick-line) !important;
+  --icon-color: #7cdce8 !important;
+  --icon-color-hover: var(--rick-line-bright) !important;
+  --nav-item-color: #a7dce2 !important;
+  --nav-item-color-hover: #e2fdff !important;
+  --nav-item-background-hover: #082a34 !important;
+  --nav-item-background-active: #0b3b48 !important;
+  --input-shadow: none !important;
+  --input-shadow-hover: var(--rick-glow) !important;
+  color-scheme: dark;
+}
+
+body.rick-ui[data-rick-accent="green"] { --rick-line: #79ef31; --rick-line-bright: #c1ff92; }
+body.rick-ui[data-rick-accent="magenta"] { --rick-line: #f84ee7; --rick-line-bright: #ffaff7; }
+
+body.rick-ui[data-rick-sharpness="square"] { --rick-radius: 0px; --rick-clip: none; }
+body.rick-ui[data-rick-sharpness="soft"] { --rick-radius: 5px; --rick-clip: none; }
+body.rick-ui[data-rick-sharpness="cut"] { --rick-radius: 0px; --rick-clip: polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px); }
+
+body.rick-ui .workspace,
+body.rick-ui .workspace-split,
+body.rick-ui .workspace-tabs,
+body.rick-ui .workspace-leaf-content,
+body.rick-ui .view-content { background-color: var(--rick-bg) !important; }
+
+/* Main panels */
+body.rick-ui .workspace-tab-container,
+body.rick-ui .workspace-sidedock-vault-profile,
+body.rick-ui .modal,
+body.rick-ui .popover,
+body.rick-ui .menu,
+body.rick-ui .suggestion-container,
+body.rick-ui .prompt,
+body.rick-ui .community-modal-info,
+body.rick-ui .vertical-tab-content-container,
+body.rick-ui .vertical-tab-header {
+  background: linear-gradient(180deg, rgba(12,42,52,.98), rgba(3,16,22,.98)) !important;
+  border: var(--rick-border) !important;
+  box-shadow: var(--rick-glow) !important;
+}
+
+/* Angular control shapes */
+body.rick-ui button,
+body.rick-ui .clickable-icon,
+body.rick-ui input,
+body.rick-ui textarea,
+body.rick-ui select,
+body.rick-ui .dropdown,
+body.rick-ui .setting-item-control > *:not(.slider),
+body.rick-ui .menu-item,
+body.rick-ui .suggestion-item,
+body.rick-ui .nav-file-title,
+body.rick-ui .nav-folder-title,
+body.rick-ui .workspace-tab-header,
+body.rick-ui .mod-cta {
+  border-radius: var(--rick-radius) !important;
+}
+body.rick-ui[data-rick-sharpness="cut"] button,
+body.rick-ui[data-rick-sharpness="cut"] input,
+body.rick-ui[data-rick-sharpness="cut"] textarea,
+body.rick-ui[data-rick-sharpness="cut"] select,
+body.rick-ui[data-rick-sharpness="cut"] .menu-item,
+body.rick-ui[data-rick-sharpness="cut"] .suggestion-item,
+body.rick-ui[data-rick-sharpness="cut"] .mod-cta {
+  clip-path: var(--rick-clip);
+}
+
+/* Buttons */
+body.rick-ui button,
+body.rick-ui .mod-cta,
+body.rick-ui .modal-button-container button {
+  background: linear-gradient(180deg,#0d3944,#071a21) !important;
+  border: 1px solid color-mix(in srgb,var(--rick-line) 82%,#05242c) !important;
+  color: var(--rick-text) !important;
+  text-transform: uppercase;
+  letter-spacing: .055em;
+  box-shadow: inset 0 0 9px color-mix(in srgb,var(--rick-line) 13%,transparent), 0 0 4px color-mix(in srgb,var(--rick-line) 25%,transparent) !important;
+  transition: filter .09s linear, box-shadow .09s linear, transform .09s linear;
+}
+body.rick-ui button:hover,
+body.rick-ui .mod-cta:hover {
+  background: linear-gradient(180deg,color-mix(in srgb,var(--rick-line) 28%,#0d3944),#09242d) !important;
+  box-shadow: var(--rick-glow) !important;
+  filter: brightness(1.18);
+}
+body.rick-ui button:active { transform: translateY(1px); filter: brightness(1.45); }
+body.rick-ui .mod-warning,
+body.rick-ui button.mod-warning { --rick-line: var(--rick-red); }
+
+/* Inputs */
+body.rick-ui input[type="text"],
+body.rick-ui input[type="search"],
+body.rick-ui input[type="number"],
+body.rick-ui textarea,
+body.rick-ui select,
+body.rick-ui .dropdown {
+  background: #04161d !important;
+  border: 1px solid #126d7b !important;
+  color: #d8fbff !important;
+  box-shadow: inset 0 0 12px rgba(25,215,238,.06) !important;
+}
+body.rick-ui input:focus,
+body.rick-ui textarea:focus,
+body.rick-ui select:focus {
+  border-color: var(--rick-line) !important;
+  box-shadow: var(--rick-glow) !important;
+}
+
+/* Tabs */
+body.rick-ui .workspace-tab-header-container {
+  background: #020c11 !important;
+  border-bottom: 1px solid #0d6573 !important;
+}
+body.rick-ui .workspace-tab-header {
+  color: #609ca5 !important;
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
+  transition: background .1s linear,color .1s linear,box-shadow .1s linear;
+}
+body.rick-ui .workspace-tab-header:hover { background: #08232c !important; color:#c8f8ff !important; }
+body.rick-ui .workspace-tab-header.is-active {
+  color: #e4fdff !important;
+  background: linear-gradient(180deg,#0d3440,#071a20) !important;
+  border-color: #126c7b !important;
+  box-shadow: inset 0 -2px 0 var(--rick-line), 0 4px 10px color-mix(in srgb,var(--rick-line) 14%,transparent) !important;
+}
+
+/* Sidebar and file navigation */
+body.rick-ui .nav-file-title,
+body.rick-ui .nav-folder-title {
+  margin: 1px 4px;
+  border-left: 2px solid transparent;
+}
+body.rick-ui .nav-file-title:hover,
+body.rick-ui .nav-folder-title:hover { border-left-color: #3ab5c5; }
+body.rick-ui .nav-file-title.is-active {
+  border-left-color: var(--rick-line) !important;
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 18%,#061921),#061921) !important;
+  box-shadow: inset 6px 0 10px color-mix(in srgb,var(--rick-line) 9%,transparent) !important;
+}
+
+/* Settings */
+body.rick-ui .setting-item { border-top-color: rgba(46,151,166,.25) !important; }
+body.rick-ui .setting-item-name { color:#d8f9fd !important; }
+body.rick-ui .setting-item-description { color:#6fabb4 !important; }
+body.rick-ui .vertical-tab-nav-item.is-active {
+  background: #0a3440 !important;
+  color:#dffcff !important;
+  box-shadow: inset 3px 0 0 var(--rick-line) !important;
+}
+
+/* Toggles and sliders */
+body.rick-ui .checkbox-container {
+  background:#071a20 !important;
+  border:1px solid #176d79 !important;
+  box-shadow:inset 0 0 8px rgba(25,215,238,.09) !important;
+}
+body.rick-ui .checkbox-container.is-enabled {
+  background:color-mix(in srgb,var(--rick-line) 45%,#061b20) !important;
+  box-shadow:var(--rick-glow) !important;
+}
+body.rick-ui input[type="range"] { accent-color: var(--rick-line); }
+
+/* Menus */
+body.rick-ui .menu-item:hover,
+body.rick-ui .suggestion-item.is-selected {
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 20%,#09232b),#09232b) !important;
+  box-shadow: inset 3px 0 0 var(--rick-line) !important;
+}
+
+/* Scrollbars */
+body.rick-ui ::-webkit-scrollbar { width:8px; height:8px; }
+body.rick-ui ::-webkit-scrollbar-track { background:#020a0e; border-left:1px solid #09333c; }
+body.rick-ui ::-webkit-scrollbar-thumb { background:#0b5360; border:1px solid #168395; }
+body.rick-ui ::-webkit-scrollbar-thumb:hover { background:var(--rick-line); }
+
+/* Markdown editor remains readable but inherits the machinery around it */
+body.rick-ui .markdown-source-view,
+body.rick-ui .markdown-reading-view { background:#010608 !important; }
+body.rick-ui .cm-gutters { background:#031016 !important; border-right:1px solid #0a5360 !important; color:#416f77 !important; }
+body.rick-ui .cm-activeLine { background:rgba(15,78,91,.12) !important; }
+body.rick-ui .cm-activeLineGutter { background:#082129 !important; color:var(--rick-line-bright) !important; }
+body.rick-ui .cm-cursor { border-left-color:var(--rick-line-bright) !important; }
+body.rick-ui .cm-selectionBackground,
+body.rick-ui ::selection { background:color-mix(in srgb,var(--rick-line) 31%,transparent) !important; }
+body.rick-ui a,
+body.rick-ui .cm-hmd-internal-link,
+body.rick-ui .internal-link { color:var(--rick-line-bright) !important; text-decoration-color:color-mix(in srgb,var(--rick-line) 55%,transparent) !important; }
+
+/* Status bar: instrument readout */
+body.rick-ui .status-bar {
+  background:#020d12 !important;
+  border:1px solid #0b6270 !important;
+  color:#72bbc5 !important;
+  box-shadow:0 0 8px rgba(25,215,238,.08) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Decorative screen treatment */
+body.rick-ui.rick-ui-grid .workspace-leaf-content::before {
+  content:"";
+  pointer-events:none;
+  position:absolute;
+  inset:0;
+  opacity:.035;
+  background-image:linear-gradient(rgba(69,222,241,.7) 1px,transparent 1px),linear-gradient(90deg,rgba(69,222,241,.7) 1px,transparent 1px);
+  background-size:32px 32px;
+  z-index:5;
+}
+body.rick-ui.rick-ui-scanlines .workspace::after {
+  content:"";
+  pointer-events:none;
+  position:fixed;
+  inset:0;
+  z-index:99999;
+  opacity:.035;
+  background:repeating-linear-gradient(180deg,rgba(190,250,255,.55) 0,rgba(190,250,255,.55) 1px,transparent 1px,transparent 4px);
+}
+
+@keyframes rick-pulse { 0%,100%{box-shadow:0 0 3px color-mix(in srgb,var(--rick-line) 22%,transparent)} 50%{box-shadow:0 0 9px color-mix(in srgb,var(--rick-line) 48%,transparent)} }
+body.rick-ui.rick-ui-animate .workspace-tab-header.is-active .workspace-tab-header-inner-icon,
+body.rick-ui.rick-ui-animate .checkbox-container.is-enabled { animation:rick-pulse 2.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.rick-ui.rick-ui-animate * { animation:none !important; transition:none !important; }
+}
+
+/* Rick UI 0.2.0 — instrument-panel expansion */
+body.rick-ui {
+  --rick-cyan-deep: #063744;
+  --rick-cyan-mid: #0b6f81;
+  --rick-red-deep: #3b090d;
+  --rick-yellow-deep: #3a2a05;
+  --rick-green-deep: #18340a;
+  --rick-frame-hi: color-mix(in srgb, var(--rick-line) 88%, white 12%);
+  --rick-frame-lo: color-mix(in srgb, var(--rick-line) 48%, #001018 52%);
+  --rick-panel-shadow: inset 0 0 0 1px rgba(0,0,0,.8), inset 0 0 18px color-mix(in srgb,var(--rick-line) 7%,transparent), 0 0 calc(8px * var(--rick-glow-factor)) color-mix(in srgb,var(--rick-line) 14%,transparent);
+}
+
+/* Heavier machine frames around major UI modules */
+body.rick-ui .workspace-leaf-content,
+body.rick-ui .modal,
+body.rick-ui .prompt,
+body.rick-ui .menu,
+body.rick-ui .popover,
+body.rick-ui .suggestion-container {
+  outline: 1px solid rgba(0,0,0,.92);
+  box-shadow: var(--rick-panel-shadow) !important;
+}
+
+body.rick-ui .modal,
+body.rick-ui .prompt,
+body.rick-ui .menu,
+body.rick-ui .popover,
+body.rick-ui .suggestion-container {
+  position: relative;
+  overflow: hidden;
+}
+
+body.rick-ui .modal::before,
+body.rick-ui .prompt::before,
+body.rick-ui .menu::before,
+body.rick-ui .popover::before,
+body.rick-ui .suggestion-container::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 3px;
+  border: 1px solid color-mix(in srgb,var(--rick-line) 28%,transparent);
+  clip-path: polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+  z-index: 0;
+}
+
+body.rick-ui .modal > *,
+body.rick-ui .prompt > *,
+body.rick-ui .menu > *,
+body.rick-ui .popover > *,
+body.rick-ui .suggestion-container > * { position: relative; z-index: 1; }
+
+/* Panel headers: separate lit modules rather than plain text bars */
+body.rick-ui.rick-ui-panel-headers .view-header,
+body.rick-ui.rick-ui-panel-headers .modal-title,
+body.rick-ui.rick-ui-panel-headers .prompt-results,
+body.rick-ui.rick-ui-panel-headers .workspace-sidedock-vault-profile {
+  background: linear-gradient(180deg, #0a3340 0%, #061a22 62%, #020b0f 100%) !important;
+  border-bottom: 1px solid var(--rick-frame-hi) !important;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,.45), inset 0 1px 0 color-mix(in srgb,var(--rick-line) 26%,transparent) !important;
+}
+
+body.rick-ui.rick-ui-panel-headers .view-header-title,
+body.rick-ui.rick-ui-panel-headers .modal-title {
+  color: #e8feff !important;
+  text-transform: uppercase;
+  letter-spacing: .075em;
+  font-weight: 700;
+  text-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 22%,transparent);
+}
+
+/* Hardware-like tab strip */
+body.rick-ui .workspace-tab-header-container-inner {
+  gap: 3px;
+  padding: 3px 5px 0;
+}
+body.rick-ui .workspace-tab-header {
+  min-height: 31px;
+  border: 1px solid #0b4652 !important;
+  background: linear-gradient(180deg,#071920,#020b0f) !important;
+  box-shadow: inset 0 1px 0 rgba(133,240,255,.05), inset 0 -3px 0 rgba(0,0,0,.35);
+}
+body.rick-ui .workspace-tab-header.is-active {
+  border-color: var(--rick-frame-hi) !important;
+  box-shadow: inset 0 -3px 0 var(--rick-line), inset 0 0 12px color-mix(in srgb,var(--rick-line) 12%,transparent), 0 0 7px color-mix(in srgb,var(--rick-line) 18%,transparent) !important;
+}
+
+/* Segmented controls seen repeatedly on Rick's machines */
+body.rick-ui.rick-ui-segmented button,
+body.rick-ui.rick-ui-segmented .mod-cta,
+body.rick-ui.rick-ui-segmented .workspace-tab-header,
+body.rick-ui.rick-ui-segmented .clickable-icon {
+  position: relative;
+  overflow: hidden;
+}
+
+body.rick-ui.rick-ui-segmented button::after,
+body.rick-ui.rick-ui-segmented .mod-cta::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 3px;
+  height: 2px;
+  opacity: .8;
+  background: repeating-linear-gradient(90deg,var(--rick-line) 0 8px,transparent 8px 12px);
+}
+
+body.rick-ui.rick-ui-segmented .workspace-tab-header::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 14px;
+  height: 3px;
+  background: repeating-linear-gradient(90deg,#306875 0 3px,transparent 3px 5px);
+  opacity: .55;
+}
+
+/* Buttons: raised instrument keys */
+body.rick-ui button,
+body.rick-ui .mod-cta,
+body.rick-ui .modal-button-container button {
+  min-height: 30px;
+  padding-inline: 12px;
+  border-width: 1px !important;
+  border-top-color: var(--rick-frame-hi) !important;
+  border-left-color: var(--rick-frame-hi) !important;
+  border-right-color: var(--rick-frame-lo) !important;
+  border-bottom-color: var(--rick-frame-lo) !important;
+  text-shadow: 0 0 5px rgba(170,247,255,.2);
+}
+body.rick-ui button:active,
+body.rick-ui .mod-cta:active {
+  border-top-color: var(--rick-frame-lo) !important;
+  border-left-color: var(--rick-frame-lo) !important;
+  border-right-color: var(--rick-frame-hi) !important;
+  border-bottom-color: var(--rick-frame-hi) !important;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.65) !important;
+}
+
+/* Hazard buttons and destructive actions */
+body.rick-ui.rick-ui-hazards button.mod-warning,
+body.rick-ui.rick-ui-hazards .mod-warning,
+body.rick-ui.rick-ui-hazards button.mod-destructive,
+body.rick-ui.rick-ui-hazards .mod-destructive,
+body.rick-ui.rick-ui-hazards .setting-item-control button.mod-warning {
+  --rick-line: var(--rick-red);
+  background: linear-gradient(180deg,#6a1720,#2b080d) !important;
+  color: #ffd9dc !important;
+  border-color: #ff6670 !important;
+  box-shadow: inset 0 0 12px rgba(255,58,71,.18),0 0 7px rgba(255,58,71,.18) !important;
+}
+body.rick-ui.rick-ui-hazards button.mod-warning::after,
+body.rick-ui.rick-ui-hazards button.mod-destructive::after {
+  background: repeating-linear-gradient(135deg,var(--rick-yellow) 0 5px,#1b0900 5px 10px);
+  height: 3px;
+}
+
+/* Warning / notice surfaces */
+body.rick-ui.rick-ui-hazards .notice {
+  background: linear-gradient(180deg,#17240c,#0a1205) !important;
+  border: 1px solid #92d54c !important;
+  color: #dfffbc !important;
+  box-shadow: inset 0 0 12px rgba(112,242,26,.08),0 0 8px rgba(112,242,26,.12) !important;
+}
+
+/* Inputs resemble embedded displays */
+body.rick-ui input[type="text"],
+body.rick-ui input[type="search"],
+body.rick-ui input[type="number"],
+body.rick-ui textarea,
+body.rick-ui select,
+body.rick-ui .dropdown {
+  border-top-color: #177f90 !important;
+  border-left-color: #177f90 !important;
+  border-right-color: #073a43 !important;
+  border-bottom-color: #073a43 !important;
+  background-image: linear-gradient(180deg,rgba(28,127,145,.06),transparent 45%) !important;
+}
+
+/* Search / command palette as a terminal module */
+body.rick-ui .prompt-input-container {
+  padding: 8px;
+  background: #020b0f !important;
+  border-bottom: 1px solid #0e6b79 !important;
+}
+body.rick-ui .prompt-input {
+  min-height: 40px;
+  font-weight: 600;
+  letter-spacing: .035em;
+}
+body.rick-ui .suggestion-item {
+  margin: 2px 5px;
+  border: 1px solid transparent;
+}
+body.rick-ui .suggestion-item.is-selected {
+  border-color: color-mix(in srgb,var(--rick-line) 52%,transparent) !important;
+}
+
+/* Machine status lights in the status bar */
+body.rick-ui .status-bar::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--rick-green);
+  box-shadow: 0 0 7px rgba(112,242,26,.75);
+  margin-right: 4px;
+}
+body.rick-ui .status-bar-item {
+  border-left: 1px solid rgba(58,159,174,.22);
+  padding-left: 7px;
+  margin-left: 2px;
+}
+
+/* File explorer gets compact readout styling */
+body.rick-ui .nav-file-title,
+body.rick-ui .nav-folder-title {
+  min-height: 25px;
+}
+body.rick-ui .nav-folder-collapse-indicator {
+  color: var(--rick-line) !important;
+  filter: drop-shadow(0 0 3px color-mix(in srgb,var(--rick-line) 30%,transparent));
+}
+body.rick-ui .nav-folder-title-content {
+  text-transform: uppercase;
+  letter-spacing: .035em;
+  font-size: .92em;
+}
+
+/* Setting groups look like console sections */
+body.rick-ui .setting-item {
+  margin: 0;
+  padding: 14px 10px;
+  border-top: 1px solid rgba(46,151,166,.2) !important;
+  border-bottom: 1px solid rgba(0,0,0,.55) !important;
+}
+body.rick-ui .setting-item:hover {
+  background: linear-gradient(90deg,rgba(25,215,238,.035),transparent 55%) !important;
+}
+
+/* Toggle becomes an illuminated two-state module */
+body.rick-ui .checkbox-container {
+  width: 42px !important;
+  height: 22px !important;
+  border-radius: 2px !important;
+  padding: 2px !important;
+}
+body.rick-ui .checkbox-container::after {
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 1px !important;
+  background: #6e9da4 !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18),0 0 4px rgba(0,0,0,.55) !important;
+}
+body.rick-ui .checkbox-container.is-enabled::after {
+  background: var(--rick-line-bright) !important;
+  box-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 66%,transparent) !important;
+}
+
+/* More visible sliders */
+body.rick-ui input[type="range"] {
+  height: 5px;
+  background: #031217;
+  border: 1px solid #0c5763;
+}
+
+/* Heading/readout details without changing document typography aggressively */
+body.rick-ui .markdown-rendered h1,
+body.rick-ui .markdown-rendered h2,
+body.rick-ui .markdown-rendered h3 {
+  text-shadow: 0 0 7px rgba(25,215,238,.08);
+}
+body.rick-ui .markdown-rendered hr {
+  border: 0;
+  height: 3px;
+  background: repeating-linear-gradient(90deg,var(--rick-line) 0 18px,transparent 18px 24px);
+  opacity: .48;
+}
+
+/* Small corner markers imitate instrument-screen brackets */
+body.rick-ui.rick-ui-panel-headers .view-content {
+  position: relative;
+}
+body.rick-ui.rick-ui-panel-headers .view-content::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 7px;
+  border-top: 1px solid rgba(25,215,238,.09);
+  border-right: 1px solid rgba(25,215,238,.04);
+  clip-path: polygon(0 0,38px 0,38px 1px,1px 1px,1px 38px,0 38px,0 0,100% 0,100% 38px,calc(100% - 1px) 38px,calc(100% - 1px) 1px,calc(100% - 38px) 1px,calc(100% - 38px) 0);
+  z-index: 5;
+}
+
+@keyframes rick-status-pulse {
+  0%,100% { opacity:.55; filter:brightness(.9); }
+  50% { opacity:1; filter:brightness(1.35); }
+}
+body.rick-ui.rick-ui-animate .status-bar::before { animation: rick-status-pulse 2.2s steps(2,end) infinite; }
