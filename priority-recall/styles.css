@@ -392,6 +392,11 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-review-root {
+  --tir-correct-color: var(--interactive-accent);
+  --tir-wrong-color: var(
+    --lg-user-secondary,
+    hsl(from var(--interactive-accent) calc(h + 180) s l)
+  );
   height: 100%;
   overflow-y: auto;
 }
@@ -654,22 +659,36 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   min-height: 46px;
 }
 
-.tir-answer-wrong {
-  border-color: var(--color-red);
-  color: var(--color-red);
+.tir-answer {
+  --tir-answer-color: var(--tir-correct-color);
+  border-color: color-mix(in srgb, var(--tir-answer-color) 58%, var(--background-modifier-border)) !important;
+  background: color-mix(in srgb, var(--tir-answer-color) 5%, var(--background-primary-alt)) !important;
+  background-image: none !important;
+  color: var(--tir-answer-color) !important;
+  -webkit-text-fill-color: currentColor !important;
+  box-shadow: none;
 }
 
 .tir-answer-correct {
-  border-color: var(--color-green);
-  color: var(--color-green);
+  --tir-answer-color: var(--tir-correct-color);
 }
 
-.tir-answer-wrong:hover {
-  background: color-mix(in srgb, var(--color-red) 15%, transparent);
+.tir-answer-wrong {
+  --tir-answer-color: var(--tir-wrong-color);
 }
 
-.tir-answer-correct:hover {
-  background: color-mix(in srgb, var(--color-green) 15%, transparent);
+.tir-answer:hover,
+.tir-answer:focus-visible {
+  border-color: var(--tir-answer-color) !important;
+  background: color-mix(in srgb, var(--tir-answer-color) 18%, var(--background-primary-alt)) !important;
+  color: var(--tir-answer-color) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tir-answer-color) 60%, transparent);
+}
+
+.tir-answer:active {
+  border-color: var(--tir-answer-color) !important;
+  background: color-mix(in srgb, var(--tir-answer-color) 27%, var(--background-primary-alt)) !important;
+  color: var(--tir-answer-color) !important;
 }
 
 .tir-review-message {
@@ -683,11 +702,13 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-result-correct {
-  border-color: var(--color-green);
+  border-color: var(--tir-correct-color);
+  background: color-mix(in srgb, var(--tir-correct-color) 5%, var(--background-primary-alt));
 }
 
 .tir-result-wrong {
-  border-color: var(--color-red);
+  border-color: var(--tir-wrong-color);
+  background: color-mix(in srgb, var(--tir-wrong-color) 5%, var(--background-primary-alt));
 }
 
 .tir-next-date {
