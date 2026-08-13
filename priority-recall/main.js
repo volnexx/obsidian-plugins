@@ -129,6 +129,24 @@ function parseDefinitionsFromLine(line) {
   }
   return definitions;
 }
+function parseListTermsFromLine(line) {
+  const terms = [];
+  for (const match of line.matchAll(BOLD_DEFINITION_PATTERN)) {
+    const content = (match[1] ?? "").trim();
+    if (content.length === 0) continue;
+    const delimiter = content.indexOf(DEFINITION_DELIMITER);
+    if (delimiter === -1) {
+      terms.push(content);
+      continue;
+    }
+    if (delimiter <= 0) continue;
+    const term = content.slice(0, delimiter).trim();
+    const definition = content.slice(delimiter + DEFINITION_DELIMITER.length).trim();
+    if (term.length === 0 || definition.length === 0) continue;
+    terms.push(term);
+  }
+  return terms;
+}
 function parseTermLines(content) {
   const lines = content.split(/\r?\n/u);
   const parsed = [];
@@ -197,20 +215,20 @@ function parseDefinitionLists(content) {
     if (title.length === 0) continue;
     const occurrence = occurrences.get(title) ?? 0;
     occurrences.set(title, occurrence + 1);
-    let definitionIndex = index + 1;
-    let definitions = parseDefinitionsFromLine(lines[definitionIndex] ?? "");
-    if (definitions.length === 0) continue;
-    const terms = definitions.map((entry) => entry.term);
-    while (definitionIndex + 1 < lines.length) {
-      let candidateIndex = definitionIndex + 1;
+    let termIndex = index + 1;
+    let lineTerms = parseListTermsFromLine(lines[termIndex] ?? "");
+    if (lineTerms.length === 0) continue;
+    const terms = [...lineTerms];
+    while (termIndex + 1 < lines.length) {
+      let candidateIndex = termIndex + 1;
       if ((lines[candidateIndex] ?? "").trim().length === 0) {
         candidateIndex += 1;
         if ((lines[candidateIndex] ?? "").trim().length === 0) break;
       }
-      definitions = parseDefinitionsFromLine(lines[candidateIndex] ?? "");
-      if (definitions.length === 0) break;
-      terms.push(...definitions.map((entry) => entry.term));
-      definitionIndex = candidateIndex;
+      lineTerms = parseListTermsFromLine(lines[candidateIndex] ?? "");
+      if (lineTerms.length === 0) break;
+      terms.push(...lineTerms);
+      termIndex = candidateIndex;
     }
     if (terms.length < 2) continue;
     parsed.push({
@@ -1398,7 +1416,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if (rawVersion === 8 && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if (rawVersion === 9 && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1674,7 +1692,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 8,
+        version: 9,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,
