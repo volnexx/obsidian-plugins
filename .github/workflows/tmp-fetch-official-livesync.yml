@@ -1,0 +1,28 @@
+name: Temporary fetch official LiveSync
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-fetch-official-livesync.yml'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download official Self-hosted LiveSync 1.0.13 release
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/obsidian-livesync
+          curl -fL --retry 5 --retry-delay 2 -o artifact/obsidian-livesync/main.js https://github.com/vrtmrz/obsidian-livesync/releases/download/1.0.13/main.js
+          curl -fL --retry 5 --retry-delay 2 -o artifact/obsidian-livesync/manifest.json https://github.com/vrtmrz/obsidian-livesync/releases/download/1.0.13/manifest.json
+          curl -fL --retry 5 --retry-delay 2 -o artifact/obsidian-livesync/styles.css https://github.com/vrtmrz/obsidian-livesync/releases/download/1.0.13/styles.css
+          echo '9087911c5d6c8ddbcc8d4b4b97a9d84aed00abe43679baa75cdcea229836b89e  artifact/obsidian-livesync/main.js' | sha256sum -c -
+          echo '092c309dd4919d4c13f16d7ad933857f31ce34e1b9e0b6de62a2a15a3924061e  artifact/obsidian-livesync/manifest.json' | sha256sum -c -
+          echo 'aefe545628de6c277c3cbe4c369a2c427d9e3f8f5beb68d6709d1142dbb2d1b2  artifact/obsidian-livesync/styles.css' | sha256sum -c -
+      - name: Upload verified release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-livesync-1.0.13
+          path: artifact/obsidian-livesync
+          if-no-files-found: error
