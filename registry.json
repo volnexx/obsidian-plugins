@@ -1,71 +1,16 @@
 {
   "schemaVersion": 1,
   "plugins": [
-    {
-      "id": "activity",
-      "name": "Activity",
-      "version": "1.0.0",
-      "path": "activity"
-    },
-    {
-      "id": "experience",
-      "name": "Опыт",
-      "version": "0.5.0",
-      "path": "experience"
-    },
-    {
-      "id": "term-interval-review",
-      "name": "Повторение терминов",
-      "version": "0.25.0",
-      "path": "priority-recall"
-    },
-    {
-      "id": "memory-monitor-ru",
-      "name": "Монитор ресурсов",
-      "version": "1.1.0",
-      "path": "resource-monitor"
-    },
-    {
-      "id": "style-settings-color-cycle",
-      "name": "Style Settings — 8 тем",
-      "version": "2.5.1",
-      "path": "style-settings-plugin"
-    },
-    {
-      "id": "updater-plugin",
-      "name": "Updater Plugin",
-      "version": "0.9.0",
-      "path": "updater-plugin"
-    },
-    {
-      "id": "line-clone-sync",
-      "name": "Line Clone Sync",
-      "version": "1.1.0",
-      "path": "linked-lines"
-    },
-    {
-      "id": "parsing",
-      "name": "Parsing",
-      "version": "0.14.0",
-      "path": "parsing"
-    },
-    {
-      "id": "omnisearch",
-      "name": "Search",
-      "version": "1.30.2",
-      "path": "search"
-    },
-    {
-      "id": "interactive-formulas",
-      "name": "Interactive Formulas",
-      "version": "0.1.8",
-      "path": "interactive-formulas"
-    },
-    {
-      "id": "rick-ui",
-      "name": "Rick UI",
-      "version": "0.3.1",
-      "path": "rick-ui"
-    }
+    {"id":"activity","name":"Activity","version":"1.0.0","path":"activity"},
+    {"id":"experience","name":"Опыт","version":"0.5.0","path":"experience"},
+    {"id":"term-interval-review","name":"Повторение терминов","version":"0.26.0","path":"priority-recall"},
+    {"id":"memory-monitor-ru","name":"Монитор ресурсов","version":"1.1.0","path":"resource-monitor"},
+    {"id":"style-settings-color-cycle","name":"Style Settings — 8 тем","version":"2.5.1","path":"style-settings-plugin"},
+    {"id":"updater-plugin","name":"Updater Plugin","version":"0.9.0","path":"updater-plugin"},
+    {"id":"line-clone-sync","name":"Line Clone Sync","version":"1.1.0","path":"linked-lines"},
+    {"id":"parsing","name":"Parsing","version":"0.14.0","path":"parsing"},
+    {"id":"omnisearch","name":"Search","version":"1.30.2","path":"search"},
+    {"id":"interactive-formulas","name":"Interactive Formulas","version":"0.1.8","path":"interactive-formulas"},
+    {"id":"rick-ui","name":"Rick UI","version":"0.3.1","path":"rick-ui"}
   ]
 }

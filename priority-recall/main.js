@@ -252,7 +252,6 @@ var REVIEW_INTERVALS = [
   3 * DAY,
   9 * DAY
 ];
-var FREE_WINDOW = 2 * MINUTE;
 var REST_WINDOW = 6 * MINUTE;
 function clampStage(stage) {
   if (!Number.isFinite(stage)) return 0;
@@ -319,13 +318,10 @@ function partitionCards(cards, now) {
   return { available, upcoming };
 }
 function getQueueActivity(cards, now) {
-  const hasUpcomingWithin = (window2) => cards.some(
-    (card) => card.dueAt > now && card.dueAt <= now + window2
+  const hasUpcomingWithinRestWindow = cards.some(
+    (card) => card.dueAt > now && card.dueAt <= now + REST_WINDOW
   );
-  return {
-    availability: hasUpcomingWithin(FREE_WINDOW) ? "busy" : "free",
-    pace: hasUpcomingWithin(REST_WINDOW) ? "work" : "rest"
-  };
+  return hasUpcomingWithinRestWindow ? "work" : "rest";
 }
 function formatDuration(milliseconds) {
   const value = Math.max(0, Math.ceil(milliseconds / SECOND) * SECOND);
@@ -583,19 +579,10 @@ var QueueView = class extends import_obsidian.ItemView {
     });
     const activity = root.createDiv({ cls: "tir-queue-activity" });
     activity.createSpan({
-      cls: "tir-activity-state",
-      text: "",
+      cls: "tir-activity-icon",
       attr: {
-        "data-activity-kind": "availability",
-        title: "\u0415\u0441\u0442\u044C \u043B\u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0435\u043D\u0438\u044F \u0432 \u0431\u043B\u0438\u0436\u0430\u0439\u0448\u0438\u0435 2 \u043C\u0438\u043D\u0443\u0442\u044B"
-      }
-    });
-    activity.createSpan({
-      cls: "tir-activity-state",
-      text: "",
-      attr: {
-        "data-activity-kind": "pace",
-        title: "\u0415\u0441\u0442\u044C \u043B\u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0435\u043D\u0438\u044F \u0432 \u0431\u043B\u0438\u0436\u0430\u0439\u0448\u0438\u0435 6 \u043C\u0438\u043D\u0443\u0442"
+        "data-activity-kind": "mode",
+        role: "img"
       }
     });
     this.updateActivityStates(now);
@@ -699,23 +686,16 @@ var QueueView = class extends import_obsidian.ItemView {
     this.updateActivityStates(now);
   }
   updateActivityStates(now) {
-    const state = getQueueActivity(this.plugin.cards, now);
-    const availability = this.contentEl.querySelector(
-      '[data-activity-kind="availability"]'
-    );
-    const pace = this.contentEl.querySelector('[data-activity-kind="pace"]');
-    if (availability) {
-      const isFree = state.availability === "free";
-      availability.setText(isFree ? "\u0441\u0432\u043E\u0431\u043E\u0434\u043D\u043E" : "\u0437\u0430\u043D\u044F\u0442\u043E");
-      availability.classList.toggle("tir-activity-calm", isFree);
-      availability.classList.toggle("tir-activity-active", !isFree);
-    }
-    if (pace) {
-      const isRest = state.pace === "rest";
-      pace.setText(isRest ? "\u043E\u0442\u0434\u044B\u0445" : "\u0440\u0430\u0431\u043E\u0442\u0430");
-      pace.classList.toggle("tir-activity-calm", isRest);
-      pace.classList.toggle("tir-activity-active", !isRest);
-    }
+    const mode = getQueueActivity(this.plugin.cards, now);
+    const indicator = this.contentEl.querySelector('[data-activity-kind="mode"]');
+    if (!indicator) return;
+    const isRest = mode === "rest";
+    const label = isRest ? "\u041C\u043E\u0436\u043D\u043E \u043E\u0442\u0434\u044B\u0445\u0430\u0442\u044C" : "\u041C\u043E\u0436\u043D\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C";
+    (0, import_obsidian.setIcon)(indicator, isRest ? "coffee" : "briefcase");
+    indicator.setAttribute("aria-label", label);
+    indicator.setAttribute("title", label);
+    indicator.classList.toggle("tir-activity-rest", isRest);
+    indicator.classList.toggle("tir-activity-work", !isRest);
   }
   createSection(root, title, kind, cards, available, now, emptyText, extraClass = "") {
     const section = root.createDiv({ cls: `tir-section ${extraClass}`.trim() });

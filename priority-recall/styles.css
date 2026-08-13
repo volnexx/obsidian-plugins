@@ -29,9 +29,10 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 }
 
 .tir-queue-activity {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
 }
 
 .tir-search {
@@ -50,28 +51,25 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   box-shadow: 0 0 0 1px var(--interactive-accent);
 }
 
-.tir-activity-state {
-  display: flex;
+.tir-activity-icon {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  font-size: var(--font-ui-small);
-  font-weight: var(--font-semibold);
-  letter-spacing: 0.02em;
+  width: 28px;
+  height: 28px;
 }
 
-.tir-activity-calm {
-  border-color: color-mix(in srgb, var(--interactive-accent) 55%, var(--background-modifier-border));
-  background: color-mix(in srgb, var(--interactive-accent) 7%, transparent);
-  color: color-mix(in srgb, var(--interactive-accent) 68%, var(--text-normal));
+.tir-activity-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.8;
 }
 
-.tir-activity-active {
-  border-color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+.tir-activity-rest {
+  color: var(--text-muted);
+}
+
+.tir-activity-work {
   color: var(--interactive-accent);
 }
 
