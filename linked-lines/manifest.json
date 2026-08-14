@@ -1,9 +1,9 @@
 {
   "id": "line-clone-sync",
   "name": "Line Clone Sync",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "1.5.0",
-  "description": "Синхронизирует изменения связанных строк и переносит строки по названию заметки.",
+  "description": "Синхронизирует связанные строки и сохраняет окончательно удалённые клоны в «Опыт».",
   "author": "volnexx",
   "isDesktopOnly": false
 }
