@@ -10,6 +10,7 @@ const DEFAULTS = {
   minimumLength: 10,
   minimumWords: 2,
   routedLinesEnabled: true,
+  archiveDeletedClones: true,
   routeSeparator: ' – ',
   showNotices: true,
   excludedFolders: '.obsidian, .trash',
@@ -109,6 +110,7 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
         current: change.newLine,
         synced: null,
         deleted: change.deleted,
+        deletedLine: change.deleted ? change.oldLine : null,
         route: oldRoute || newRoute,
         targets: null,
         timer: 0,
@@ -119,6 +121,7 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
     } else {
       session.current = change.newLine;
       session.deleted = change.deleted;
+      session.deletedLine = change.deleted ? change.oldLine : null;
       session.dirty = true;
       const route = this.parseRoute(change.newLine);
       if (route) session.route = route;
@@ -217,6 +220,9 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
   async establish(session) {
     const files = this.app.vault.getMarkdownFiles();
     const backups = [], targets = [];
+    const deletedOccurrences = session.deleted
+      ? [{ originalPath: session.sourcePath, title: session.sourceName, line: session.deletedLine || session.original }]
+      : [];
     let replacements = 0, changedFiles = 0;
 
     for (const file of files) {
@@ -232,6 +238,7 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
         backups.push({ path: file.path, content: before });
         targets.push({ path: file.path, indices: result.indices, current: session.current, kind: 'identity' });
         replacements += result.count; changedFiles++;
+        if (session.deleted) this.addDeletedOccurrences(deletedOccurrences, file, result.removed);
       }
     }
 
@@ -253,6 +260,7 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
           backups.push({ path: file.path, content: before });
           targets.push({ path: file.path, indices: result.indices, current: wanted, kind: 'payload' });
           replacements += result.count; changedFiles++;
+          if (session.deleted) this.addDeletedOccurrences(deletedOccurrences, file, result.removed);
         }
       }
     }
@@ -272,6 +280,7 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
             backups.push({ path: file.path, content: before });
             targets.push({ path: file.path, indices: result.indices, current: prefix + session.current, kind: 'prefixed', prefix });
             replacements += result.count; changedFiles++;
+            if (session.deleted) this.addDeletedOccurrences(deletedOccurrences, file, result.removed);
             break;
           }
         }
@@ -280,14 +289,20 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
 
     if (!targets.length) { this.sessions.delete(session.sourcePath); return false; }
     this.lastOperation = { backups };
-    if (session.deleted) this.sessions.delete(session.sourcePath);
+    if (session.deleted) {
+      this.sessions.delete(session.sourcePath);
+      await this.finishDeletedSession(session, deletedOccurrences, replacements, changedFiles);
+    }
     else { session.targets = targets; session.synced = session.current; }
-    if (this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}`);
+    if (!session.deleted && this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}`);
     return !session.deleted;
   }
 
   async updateTargets(session) {
     const backups = [], survivors = [];
+    const deletedOccurrences = session.deleted
+      ? [{ originalPath: session.sourcePath, title: session.sourceName, line: session.deletedLine || session.synced || session.original }]
+      : [];
     let replacements = 0, changedFiles = 0;
     for (const target of session.targets) {
       const file = this.app.vault.getAbstractFileByPath(target.path);
@@ -303,26 +318,106 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
       if (result?.count) {
         backups.push({ path: target.path, content: before });
         replacements += result.count; changedFiles++;
+        if (session.deleted) this.addDeletedOccurrences(deletedOccurrences, file, result.removed);
         if (!session.deleted) survivors.push({ ...target, indices: result.indices, current: next });
       } else if (!session.deleted) survivors.push(target);
     }
     if (backups.length) this.lastOperation = { backups };
-    if (session.deleted) this.sessions.delete(session.sourcePath);
+    if (session.deleted) {
+      this.sessions.delete(session.sourcePath);
+      await this.finishDeletedSession(session, deletedOccurrences, replacements, changedFiles);
+    }
     else { session.targets = survivors; session.synced = session.current; }
-    if (this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}`);
+    if (!session.deleted && this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}`);
+  }
+
+  addDeletedOccurrences(target, file, lines) {
+    for (const line of lines || []) target.push({ originalPath: file.path, title: file.basename, line });
+  }
+
+  deletionCandidates(session, occurrences) {
+    const candidates = new Set(occurrences.map(item => this.normalize(item.line)).filter(Boolean));
+    const sourceLine = session.deletedLine || session.synced || session.original;
+    candidates.add(this.normalize(sourceLine));
+    if (session.route) {
+      candidates.add(this.normalize(this.routePayload(session, sourceLine)));
+    } else {
+      for (const separator of [' – ', ' - ', ' — ']) {
+        candidates.add(this.normalize(`${session.sourceName}${separator}${sourceLine}`));
+      }
+    }
+    candidates.delete('');
+    return candidates;
+  }
+
+  async hasRemainingClone(session, occurrences) {
+    const candidates = this.deletionCandidates(session, occurrences);
+    if (!candidates.size) return false;
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (file.path === session.sourcePath) continue;
+      const content = await this.app.vault.cachedRead(file);
+      if (content.split(/\r?\n/).some(line => candidates.has(this.normalize(line)))) return true;
+    }
+    return false;
+  }
+
+  getExperienceApi() {
+    const manager = this.app.plugins;
+    const plugin = manager?.getPlugin?.('experience') || manager?.plugins?.experience;
+    return plugin?.api?.version === 1 && typeof plugin.api.archiveDeletedCloneLines === 'function'
+      ? plugin.api
+      : null;
+  }
+
+  async finishDeletedSession(session, occurrences, replacements, changedFiles) {
+    if (!this.settings.archiveDeletedClones) {
+      if (this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}`);
+      return;
+    }
+    let hasRemaining;
+    try {
+      hasRemaining = await this.hasRemainingClone(session, occurrences);
+    } catch (error) {
+      console.error('Синхронизация строк: не удалось проверить оставшиеся клоны', error);
+      new Notice('Удаление завершено, но строка не записана в «Опыт»: не удалось проверить все заметки.', 8000);
+      return;
+    }
+    if (hasRemaining) {
+      if (this.settings.showNotices && replacements) new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}. В «Опыт» не записано: остался клон.`);
+      return;
+    }
+    const api = this.getExperienceApi();
+    if (!api) {
+      new Notice('Строки удалены, но не сохранены: включите совместимую версию плагина «Опыт».', 8000);
+      return;
+    }
+    try {
+      const result = await api.archiveDeletedCloneLines(occurrences);
+      if (result.failedNotes?.length) {
+        console.error('Синхронизация строк: не все призрачные заметки обновлены', result.failedNotes);
+        new Notice(`Не удалось обновить призрачных заметок: ${result.failedNotes.length}.`, 8000);
+      }
+      if (this.settings.showNotices && replacements) {
+        new Notice(`Синхронизировано строк: ${replacements}; заметок: ${changedFiles}; сохранено в «Опыт»: ${result.archivedLines || 0}`);
+      }
+    } catch (error) {
+      console.error('Синхронизация строк: не удалось записать удалённые строки в «Опыт»', error);
+      new Notice('Строки удалены, но призрачные заметки не обновлены.', 8000);
+    }
   }
 
   replaceIndices(text, indices, oldLine, newLine, deleted) {
     const eol = text.includes('\r\n') ? '\r\n' : '\n';
-    const lines = text.split(/\r?\n/), changed = [];
+    const lines = text.split(/\r?\n/), changed = [], removed = [];
     const order = deleted ? [...indices].sort((a,b) => b-a) : indices;
     for (const i of order) {
       if (i < 0 || i >= lines.length || this.normalize(lines[i]) !== this.normalize(oldLine)) continue;
-      if (deleted) lines.splice(i, 1); else lines[i] = newLine;
+      if (deleted) removed.push(lines[i]), lines.splice(i, 1); else lines[i] = newLine;
       changed.push(i);
     }
     changed.sort((a,b) => a-b);
-    return { text: changed.length ? lines.join(eol) : text, count: changed.length, indices: deleted ? [] : changed };
+    removed.reverse();
+    return { text: changed.length ? lines.join(eol) : text, count: changed.length, indices: deleted ? [] : changed, removed };
   }
 
   replaceText(text, oldLine, newLine, deleted) {
@@ -337,18 +432,19 @@ module.exports = class LineCloneSyncPlugin extends Plugin {
         lines[i] = lines[i].replace(new RegExp(escaped, flags), () => { count++; return newLine; });
         if (count) { indices.push(i); if (!this.settings.replaceAllPerNote) break; }
       }
-      return { text: count ? lines.join(eol) : text, count, indices };
+      return { text: count ? lines.join(eol) : text, count, indices, removed: [] };
     }
-    const order = [...lines.keys()];
+    const order = [...lines.keys()], removed = [];
     if (deleted) order.reverse();
     for (const i of order) {
       if (this.normalize(lines[i]) !== this.normalize(oldLine)) continue;
-      if (deleted) lines.splice(i, 1); else lines[i] = newLine;
+      if (deleted) removed.push(lines[i]), lines.splice(i, 1); else lines[i] = newLine;
       indices.push(i);
       if (!this.settings.replaceAllPerNote) break;
     }
     indices.sort((a,b) => a-b);
-    return { text: indices.length ? lines.join(eol) : text, count: indices.length, indices };
+    removed.reverse();
+    return { text: indices.length ? lines.join(eol) : text, count: indices.length, indices, removed };
   }
 
   async undo() {
@@ -397,6 +493,7 @@ class SettingsTab extends PluginSettingTab {
     this.toggle(c, 'Все совпадения в заметке', 'Заменять все совпадения, а не первое.', 'replaceAllPerNote');
     this.toggle(c, 'Показывать уведомления', 'Показывать только успешные синхронизации.', 'showNotices');
     this.toggle(c, 'Переносить строки по названию заметки', '«Название – текст» создаёт или синхронизирует текст в указанной заметке.', 'routedLinesEnabled');
+    this.toggle(c, 'Сохранять полностью удалённые клоны в «Опыт»', 'После удаления последнего клона строка добавляется в призрачные копии заметок.', 'archiveDeletedClones');
     this.text(c, 'Разделитель переноса', 'Основной разделитель. Также распознаются -, – и — с пробелами.', 'routeSeparator');
     this.number(c, 'Задержка после ввода', 'Миллисекунды.', 'debounceMs', 50);
     this.number(c, 'Минимальное количество слов', 'Со скольких слов создаётся новая связь. Уже созданная связь сохраняется до полного удаления.', 'minimumWords', 1);
