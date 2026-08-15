@@ -40,6 +40,11 @@ var import_obsidian2 = require("obsidian");
 
 // linker/linkerInfo.ts
 var import_obsidian = require("obsidian");
+var normalizeDirectoryPath = (directory) => directory.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+var isPathInDirectories = (filePath, directories) => {
+  const normalizedPath = normalizeDirectoryPath(filePath);
+  return directories.map(normalizeDirectoryPath).filter((directory) => directory.length > 0).some((directory) => normalizedPath.startsWith(`${directory}/`) || normalizedPath.includes(`/${directory}/`));
+};
 var LinkerFileMetaInfo = class {
   constructor(fetcher, file) {
     this.fetcher = fetcher;
@@ -65,7 +70,7 @@ var LinkerMetaInfoFetcher = class {
     this.settings = settings != null ? settings : this.settings;
     this.includeAllFiles = this.settings.includeAllFiles;
     const createDirectoryPattern = (directories) => {
-      const pattern = directories.map((directory) => directory.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")).filter((directory) => directory.length > 0).map((directory) => directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+      const pattern = directories.map(normalizeDirectoryPath).filter((directory) => directory.length > 0).map((directory) => directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
       return pattern.length > 0 ? new RegExp(`(^|/)(${pattern})/`) : /$a/;
     };
     this.includeDirPattern = createDirectoryPattern(this.settings.linkerDirectories);
@@ -603,6 +608,9 @@ var GlossaryLinker = class extends import_obsidian3.MarkdownRenderChild {
   }
   onload() {
     if (!this.settings.linkerActivated) {
+      return;
+    }
+    if (isPathInDirectories(this.ctx.sourcePath, this.settings.excludedDirectoriesForLinking)) {
       return;
     }
     const tags = ["p", "li", "td", "th", "span", "em", "strong"];
@@ -1288,19 +1296,16 @@ var AutoLinkerPlugin = class {
   destroy() {
   }
   buildDecorations(view, viewIsActive = true) {
-    var _a, _b, _c, _d;
+    var _a;
     const builder = new import_state.RangeSetBuilder();
     if (!this.settings.linkerActivated) {
       return builder.finish();
     }
     const dom = view.dom;
     const mappedFile = this.viewUpdateDomToFileMap.get(dom);
-    const excludedFolders = this.settings.excludedDirectoriesForLinking;
-    if (excludedFolders.length > 0) {
-      const path2 = (_d = (_a = mappedFile == null ? void 0 : mappedFile.parent) == null ? void 0 : _a.path) != null ? _d : (_c = (_b = this.app.workspace.getActiveFile()) == null ? void 0 : _b.parent) == null ? void 0 : _c.path;
-      if (excludedFolders.includes(path2 != null ? path2 : ""))
-        return builder.finish();
-    }
+    const activeFilePath = (mappedFile == null ? void 0 : mappedFile.path) || ((_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path) || "";
+    if (isPathInDirectories(activeFilePath, this.settings.excludedDirectoriesForLinking))
+      return builder.finish();
     const explicitlyLinkedFiles = /* @__PURE__ */ new Set();
     const alreadyLinkedFiles = /* @__PURE__ */ new Set();
     for (let { from, to } of view.visibleRanges) {
@@ -1482,7 +1487,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, source) => this.addContextMenuItem(menu, file, source)));
     this.addCommand({
       id: "activate-virtual-linker",
-      name: "Activate Virtual Linker",
+      name: "Включить виртуальные ссылки",
       checkCallback: (checking) => {
         if (!this.settings.linkerActivated) {
           if (!checking) {
@@ -1496,7 +1501,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
     });
     this.addCommand({
       id: "deactivate-virtual-linker",
-      name: "Deactivate Virtual Linker",
+      name: "Выключить виртуальные ссылки",
       checkCallback: (checking) => {
         if (this.settings.linkerActivated) {
           if (!checking) {
@@ -1510,7 +1515,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
     });
     this.addCommand({
       id: "convert-selected-virtual-links",
-      name: "Convert All Virtual Links in Selection to Real Links",
+      name: "Преобразовать выделенные виртуальные ссылки в обычные",
       checkCallback: (checking) => {
         var _a;
         const view = this.app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView);
@@ -1611,11 +1616,11 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
         const to = parseInt(targetElement.getAttribute("to") || "-1");
         if (from === -1 || to === -1) {
           menu.addItem((item) => {
-            item.setTitle("[Virtual Linker] Converting link is not here.").setIcon("link");
+            item.setTitle("[Виртуальные ссылки] Здесь нечего преобразовывать").setIcon("link");
           });
         } else if (isVirtualLink) {
           menu.addItem((item) => {
-            item.setTitle("[Virtual Linker] Convert to real link").setIcon("link").onClick(() => {
+            item.setTitle("[Виртуальные ссылки] Преобразовать в обычную ссылку").setIcon("link").onClick(() => {
               var _a, _b;
               const from2 = parseInt(targetElement.getAttribute("from") || "-1");
               const to2 = parseInt(targetElement.getAttribute("to") || "-1");
@@ -1686,7 +1691,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
       const metaInfo = fetcher.getMetaInfo(file);
       if (!metaInfo.excludeFile && (metaInfo.includeAllFiles || metaInfo.includeFile || metaInfo.isInIncludedDir)) {
         menu.addItem((item) => {
-          item.setTitle("[Virtual Linker] Exclude this file").setIcon("trash").onClick(async () => {
+          item.setTitle("[Виртуальные ссылки] Исключить эту заметку").setIcon("trash").onClick(async () => {
             const target = file;
             const targetFile = app.vault.getFileByPath(target.path);
             if (!targetFile) {
@@ -1721,7 +1726,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
         });
       } else if (!metaInfo.includeFile && (!metaInfo.includeAllFiles || metaInfo.excludeFile || metaInfo.isInExcludedDir)) {
         menu.addItem((item) => {
-          item.setTitle("[Virtual Linker] Include this file").setIcon("plus").onClick(async () => {
+          item.setTitle("[Виртуальные ссылки] Включить эту заметку").setIcon("plus").onClick(async () => {
             const target = file;
             const targetFile = app.vault.getFileByPath(target.path);
             if (!targetFile) {
@@ -1762,7 +1767,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
       const isInExcludedDir = fetcher.excludeDirPattern.test(path2);
       if (fetcher.includeAllFiles && !isInExcludedDir || isInIncludedDir) {
         menu.addItem((item) => {
-          item.setTitle("[Virtual Linker] Exclude this directory").setIcon("trash").onClick(async () => {
+          item.setTitle("[Виртуальные ссылки] Исключить эту папку").setIcon("trash").onClick(async () => {
             const target = file;
             const targetFolder = app.vault.getAbstractFileByPath(target.path);
             if (!targetFolder) {
@@ -1777,7 +1782,7 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
         });
       } else if (!fetcher.includeAllFiles && !isInIncludedDir || isInExcludedDir) {
         menu.addItem((item) => {
-          item.setTitle("[Virtual Linker] Include this directory").setIcon("plus").onClick(async () => {
+          item.setTitle("[Виртуальные ссылки] Включить эту папку").setIcon("plus").onClick(async () => {
             const target = file;
             const targetFolder = app.vault.getAbstractFileByPath(target.path);
             if (!targetFolder) {
@@ -1825,64 +1830,64 @@ var LinkerSettingTab = class extends import_obsidian5.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian5.Setting(containerEl).setName("Activate Virtual Linker").addToggle((toggle) => toggle.setValue(this.plugin.settings.linkerActivated).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Включить виртуальные ссылки").setDesc("Включает поиск совпадений и добавление значков виртуальных ссылок.").addToggle((toggle) => toggle.setValue(this.plugin.settings.linkerActivated).onChange(async (value) => {
       await this.plugin.updateSettings({ linkerActivated: value });
     }));
-    new import_obsidian5.Setting(containerEl).setName("Show advanced settings").addToggle((toggle) => toggle.setValue(this.plugin.settings.advancedSettings).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Показывать дополнительные настройки").setDesc("Открывает редко используемые параметры точной настройки.").addToggle((toggle) => toggle.setValue(this.plugin.settings.advancedSettings).onChange(async (value) => {
       await this.plugin.updateSettings({ advancedSettings: value });
       this.display();
     }));
-    new import_obsidian5.Setting(containerEl).setName("Matching behavior").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Include aliases").setDesc("If activated, the virtual linker will also include aliases for the files.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeAliases).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Поиск совпадений").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("Учитывать псевдонимы").setDesc("Использует не только названия заметок, но и их псевдонимы.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeAliases).onChange(async (value) => {
       await this.plugin.updateSettings({ includeAliases: value });
     }));
     if (this.plugin.settings.advancedSettings) {
-      new import_obsidian5.Setting(containerEl).setName("Only link once").setDesc("If activated, there will not be several identical virtual links in the same note (Wikipedia style).").addToggle((toggle) => toggle.setValue(this.plugin.settings.onlyLinkOnce).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Помечать термин только один раз").setDesc("Оставляет только первое совпадение каждого термина в заметке.").addToggle((toggle) => toggle.setValue(this.plugin.settings.onlyLinkOnce).onChange(async (value) => {
         await this.plugin.updateSettings({ onlyLinkOnce: value });
       }));
-      new import_obsidian5.Setting(containerEl).setName("Exclude links to real linked files").setDesc("If activated, there will be no links to files that are already linked in the note by real links.").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksToRealLinkedFiles).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Не помечать уже связанные заметки").setDesc("Не создаёт виртуальные ссылки на заметки, для которых в тексте уже есть обычная ссылка.").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksToRealLinkedFiles).onChange(async (value) => {
         await this.plugin.updateSettings({ excludeLinksToRealLinkedFiles: value });
       }));
     }
-    new import_obsidian5.Setting(containerEl).setName("Include headers").setDesc("If activated, headers (so your lines beginning with at least one `#`) are included for virtual links.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeHeaders).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Искать в заголовках").setDesc("Добавляет значки виртуальных ссылок в строках, начинающихся с `#`.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeHeaders).onChange(async (value) => {
       await this.plugin.updateSettings({ includeHeaders: value });
     }));
-    new import_obsidian5.Setting(containerEl).setName("Match any part of a word").setDesc("If deactivated, only whole words are matched. Otherwise, every part of a word is found.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchAnyPartsOfWords).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Искать внутри слов").setDesc("Находит совпадение в любой части слова. Если выключено, по умолчанию учитываются границы слов.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchAnyPartsOfWords).onChange(async (value) => {
       await this.plugin.updateSettings({ matchAnyPartsOfWords: value });
       this.display();
     }));
     if (!this.plugin.settings.matchAnyPartsOfWords) {
-      new import_obsidian5.Setting(containerEl).setName("Match the beginning of words").setDesc("If activated, the beginnings of words are also linked, even if it is not a whole match.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchBeginningOfWords).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Искать в начале слова").setDesc("Считает совпадением начало более длинного слова.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchBeginningOfWords).onChange(async (value) => {
         await this.plugin.updateSettings({ matchBeginningOfWords: value });
         this.display();
       }));
-      new import_obsidian5.Setting(containerEl).setName("Match the end of words").setDesc("If activated, the ends of words are also linked, even if it is not a whole match.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchEndOfWords).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Искать в конце слова").setDesc("Считает совпадением конец более длинного слова.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchEndOfWords).onChange(async (value) => {
         await this.plugin.updateSettings({ matchEndOfWords: value });
         this.display();
       }));
     }
     if (this.plugin.settings.matchAnyPartsOfWords || this.plugin.settings.matchBeginningOfWords) {
-      new import_obsidian5.Setting(containerEl).setName("Suppress suffix for sub words").setDesc("If activated, the suffix is not added to links for subwords, but only for complete matches.").addToggle((toggle) => toggle.setValue(this.plugin.settings.suppressSuffixForSubWords).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Не добавлять значок к части слова").setDesc("Показывает значок только у полного совпадения слова или словосочетания.").addToggle((toggle) => toggle.setValue(this.plugin.settings.suppressSuffixForSubWords).onChange(async (value) => {
         await this.plugin.updateSettings({ suppressSuffixForSubWords: value });
       }));
     }
     if (this.plugin.settings.advancedSettings) {
-      new import_obsidian5.Setting(containerEl).setName("Fix IME problem").setDesc("If activated, there will be no links in the current line start which is followed immediately by the Input Method Editor (IME). This is the recommended setting if you are using IME (input method editor) for typing, e.g. for chinese characters, because instant linking might interfere with IME.").addToggle((toggle) => toggle.setValue(this.plugin.settings.fixIMEProblem).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Совместимость с редактором метода ввода (IME)").setDesc("Не добавляет значки в начале текущей строки во время составного ввода. Нужно главным образом для китайской, японской и корейской раскладок.").addToggle((toggle) => toggle.setValue(this.plugin.settings.fixIMEProblem).onChange(async (value) => {
         await this.plugin.updateSettings({ fixIMEProblem: value });
       }));
     }
     if (this.plugin.settings.advancedSettings) {
-      new import_obsidian5.Setting(containerEl).setName("Avoid linking in current line").setDesc("If activated, there will be no links in the current line.").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksInCurrentLine).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Не добавлять значки в текущей строке").setDesc("Скрывает виртуальные ссылки в строке, где находится курсор.").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksInCurrentLine).onChange(async (value) => {
         await this.plugin.updateSettings({ excludeLinksInCurrentLine: value });
       }));
     }
-    new import_obsidian5.Setting(containerEl).setName("Case sensitivity").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Case sensitive").setDesc("If activated, the matching is case sensitive.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchCaseSensitive).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Регистр букв").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("Учитывать регистр").setDesc("Различает заглавные и строчные буквы при поиске совпадений.").addToggle((toggle) => toggle.setValue(this.plugin.settings.matchCaseSensitive).onChange(async (value) => {
       await this.plugin.updateSettings({ matchCaseSensitive: value });
       this.display();
     }));
     if (this.plugin.settings.advancedSettings) {
-      new import_obsidian5.Setting(containerEl).setName("Capital letter percentage for automatic match case").setDesc("The percentage (0 - 100) of capital letters in a file name or alias to be automatically considered as case sensitive.").addText((text) => text.setValue((this.plugin.settings.capitalLetterProportionForAutomaticMatchCase * 100).toFixed(1)).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Доля заглавных букв для автоматического учёта регистра").setDesc("Если доля заглавных букв в названии или псевдониме достигает этого значения, регистр учитывается автоматически. Допустимо от 0 до 100 процентов.").addText((text) => text.setValue((this.plugin.settings.capitalLetterProportionForAutomaticMatchCase * 100).toFixed(1)).onChange(async (value) => {
         let newValue = parseFloat(value);
         if (isNaN(newValue)) {
           newValue = 75;
@@ -1895,97 +1900,101 @@ var LinkerSettingTab = class extends import_obsidian5.PluginSettingTab {
         await this.plugin.updateSettings({ capitalLetterProportionForAutomaticMatchCase: newValue });
       }));
       if (this.plugin.settings.matchCaseSensitive) {
-        new import_obsidian5.Setting(containerEl).setName("Tag to ignore case").setDesc("By adding this tag to a file, the linker will ignore the case for the file.").addText((text) => text.setValue(this.plugin.settings.tagToIgnoreCase).onChange(async (value) => {
+        new import_obsidian5.Setting(containerEl).setName("Метка для игнорирования регистра").setDesc("Заметки с этой меткой сопоставляются без учёта регистра.").addText((text) => text.setValue(this.plugin.settings.tagToIgnoreCase).onChange(async (value) => {
           await this.plugin.updateSettings({ tagToIgnoreCase: value });
         }));
       } else {
-        new import_obsidian5.Setting(containerEl).setName("Tag to match case").setDesc("By adding this tag to a file, the linker will match the case for the file.").addText((text) => text.setValue(this.plugin.settings.tagToMatchCase).onChange(async (value) => {
+        new import_obsidian5.Setting(containerEl).setName("Метка для учёта регистра").setDesc("Заметки с этой меткой сопоставляются с учётом регистра.").addText((text) => text.setValue(this.plugin.settings.tagToMatchCase).onChange(async (value) => {
           await this.plugin.updateSettings({ tagToMatchCase: value });
         }));
       }
-      new import_obsidian5.Setting(containerEl).setName("Property name to ignore case").setDesc("By adding this property to a note, containing a list of names, the linker will ignore the case for the specified names / aliases. This way you can decide, which alias should be insensitive.").addText((text) => text.setValue(this.plugin.settings.propertyNameToIgnoreCase).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Свойство для игнорирования регистра").setDesc("Свойство заметки со списком названий или псевдонимов, которые нужно сопоставлять без учёта регистра.").addText((text) => text.setValue(this.plugin.settings.propertyNameToIgnoreCase).onChange(async (value) => {
         await this.plugin.updateSettings({ propertyNameToIgnoreCase: value });
       }));
-      new import_obsidian5.Setting(containerEl).setName("Property name to match case").setDesc("By adding this property to a note, containing a list of names, the linker will match the case for the specified names / aliases. This way you can decide, which alias should be case sensitive.").addText((text) => text.setValue(this.plugin.settings.propertyNameToMatchCase).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Свойство для учёта регистра").setDesc("Свойство заметки со списком названий или псевдонимов, которые нужно сопоставлять с учётом регистра.").addText((text) => text.setValue(this.plugin.settings.propertyNameToMatchCase).onChange(async (value) => {
         await this.plugin.updateSettings({ propertyNameToMatchCase: value });
       }));
     }
-    new import_obsidian5.Setting(containerEl).setName("Matched files").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Include all files").setDesc("Include all files for the virtual linker.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeAllFiles).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Заметки-цели").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("Использовать все заметки").setDesc("Использует названия и псевдонимы всех подходящих заметок хранилища.").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeAllFiles).onChange(async (value) => {
       await this.plugin.updateSettings({ includeAllFiles: value });
       this.display();
     }));
     if (!this.plugin.settings.includeAllFiles) {
-      new import_obsidian5.Setting(containerEl).setName("Glossary linker directories").setDesc("Directories to include for the virtual linker (separated by new lines).").addTextArea((text) => {
+      const includedDirectoriesSetting = new import_obsidian5.Setting(containerEl).setName("Папки с заметками-целями").setDesc("Плагин использует заметки только из этих папок. Указывайте по одному пути на строку; вложенные папки также учитываются.").addTextArea((text) => {
         let setValue = "";
         try {
           setValue = this.plugin.settings.linkerDirectories.join("\n");
         } catch (e) {
           console.warn(e);
         }
-        text.setPlaceholder("List of directory names (separated by new line)").setValue(setValue).onChange(async (value) => {
-          this.plugin.settings.linkerDirectories = value.split("\n").map((x) => x.trim()).filter((x) => x.length > 0);
+        text.setPlaceholder("Например: словарь\nпроекты/термины").setValue(setValue).onChange(async (value) => {
+          this.plugin.settings.linkerDirectories = value.split("\n").map(normalizeDirectoryPath).filter((x) => x.length > 0);
           await this.plugin.updateSettings();
         });
         text.inputEl.addClass("linker-settings-text-box");
       });
+      includedDirectoriesSetting.settingEl.addClass("virtual-linker-folder-setting");
     }
-    new import_obsidian5.Setting(containerEl).setName("Исключённые папки с заметками-целями").setDesc("Плагин не будет брать названия и псевдонимы заметок из этих папок. Указывайте по одному пути на строку; исключение действует и на вложенные папки.").addTextArea((text) => {
+    if (this.plugin.settings.advancedSettings) {
+      new import_obsidian5.Setting(containerEl).setName("Метка принудительного включения заметки").setDesc("Заметка с этой меткой используется как цель независимо от остальных ограничений.").addText((text) => text.setValue(this.plugin.settings.tagToIncludeFile).onChange(async (value) => {
+        await this.plugin.updateSettings({ tagToIncludeFile: value });
+      }));
+      new import_obsidian5.Setting(containerEl).setName("Метка исключения заметки").setDesc("Заметка с этой меткой не используется как цель виртуальных ссылок.").addText((text) => text.setValue(this.plugin.settings.tagToExcludeFile).onChange(async (value) => {
+        await this.plugin.updateSettings({ tagToExcludeFile: value });
+      }));
+      new import_obsidian5.Setting(containerEl).setName("Не создавать ссылку заметки на саму себя").setDesc("Исключает текущую заметку из её собственных целей. В отдельных окнах чтения ограничение может не сработать.").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksToOwnNote).onChange(async (value) => {
+        await this.plugin.updateSettings({ excludeLinksToOwnNote: value });
+      }));
+    }
+    new import_obsidian5.Setting(containerEl).setName("Исключённые папки").setHeading();
+    const excludedTargetDirectoriesSetting = new import_obsidian5.Setting(containerEl).setName("Папки с исключёнными заметками-целями").setDesc("Плагин не берёт названия и псевдонимы заметок из этих папок. Указывайте по одному пути на строку; вложенные папки также исключаются.").addTextArea((text) => {
       let setValue = "";
       try {
         setValue = this.plugin.settings.excludedDirectories.join("\n");
       } catch (e) {
         console.warn(e);
       }
-      text.setPlaceholder("Например: архив/старые заметки").setValue(setValue).onChange(async (value) => {
-        this.plugin.settings.excludedDirectories = value.split("\n").map((x) => x.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")).filter((x) => x.length > 0);
+      text.setPlaceholder("Например: архив\nпроекты/старые заметки").setValue(setValue).onChange(async (value) => {
+        this.plugin.settings.excludedDirectories = value.split("\n").map(normalizeDirectoryPath).filter((x) => x.length > 0);
         await this.plugin.updateSettings();
       });
       text.inputEl.addClass("linker-settings-text-box");
     });
-    if (this.plugin.settings.advancedSettings) {
-      new import_obsidian5.Setting(containerEl).setName("Tag to include file").setDesc("Tag to explicitly include the file for the linker.").addText((text) => text.setValue(this.plugin.settings.tagToIncludeFile).onChange(async (value) => {
-        await this.plugin.updateSettings({ tagToIncludeFile: value });
-      }));
-      new import_obsidian5.Setting(containerEl).setName("Tag to ignore file").setDesc("Tag to ignore the file for the linker.").addText((text) => text.setValue(this.plugin.settings.tagToExcludeFile).onChange(async (value) => {
-        await this.plugin.updateSettings({ tagToExcludeFile: value });
-      }));
-      new import_obsidian5.Setting(containerEl).setName("Exclude self-links to the current note").setDesc("If toggled, links to the note itself are excluded from the linker. (This might not work in preview windows.)").addToggle((toggle) => toggle.setValue(this.plugin.settings.excludeLinksToOwnNote).onChange(async (value) => {
-        await this.plugin.updateSettings({ excludeLinksToOwnNote: value });
-      }));
-      new import_obsidian5.Setting(containerEl).setName("Excluded directories for generating virtual links").setDesc("Directories in which the plugin will not create virtual links (separated by new lines).").addTextArea((text) => {
-        let setValue = "";
-        try {
-          setValue = this.plugin.settings.excludedDirectoriesForLinking.join("\n");
-        } catch (e) {
-          console.warn(e);
-        }
-        text.setPlaceholder("List of directory names (separated by new line)").setValue(setValue).onChange(async (value) => {
-          this.plugin.settings.excludedDirectoriesForLinking = value.split("\n").map((x) => x.trim()).filter((x) => x.length > 0);
-          await this.plugin.updateSettings();
-        });
-        text.inputEl.addClass("linker-settings-text-box");
+    excludedTargetDirectoriesSetting.settingEl.addClass("virtual-linker-folder-setting");
+    const excludedSourceDirectoriesSetting = new import_obsidian5.Setting(containerEl).setName("Папки без виртуальных ссылок").setDesc("В заметках из этих папок плагин вообще не добавляет значки. Указывайте по одному пути на строку; вложенные папки также исключаются.").addTextArea((text) => {
+      let setValue = "";
+      try {
+        setValue = this.plugin.settings.excludedDirectoriesForLinking.join("\n");
+      } catch (e) {
+        console.warn(e);
+      }
+      text.setPlaceholder("Например: шаблоны\nархив/готовое").setValue(setValue).onChange(async (value) => {
+        this.plugin.settings.excludedDirectoriesForLinking = value.split("\n").map(normalizeDirectoryPath).filter((x) => x.length > 0);
+        await this.plugin.updateSettings();
       });
-    }
-    new import_obsidian5.Setting(containerEl).setName("Link style").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Always show multiple references").setDesc("If toggled, if there are multiple matching notes, all references are shown behind the match. If not toggled, the references are only shown if hovering over the match.").addToggle((toggle) => toggle.setValue(this.plugin.settings.alwaysShowMultipleReferences).onChange(async (value) => {
+      text.inputEl.addClass("linker-settings-text-box");
+    });
+    excludedSourceDirectoriesSetting.settingEl.addClass("virtual-linker-folder-setting");
+    new import_obsidian5.Setting(containerEl).setName("Значок и преобразование").setHeading();
+    new import_obsidian5.Setting(containerEl).setName("Всегда показывать несколько целей").setDesc("Если одному совпадению соответствуют несколько заметок, сразу показывает все номера целей. Если выключено, номера появляются только при наведении на значок.").addToggle((toggle) => toggle.setValue(this.plugin.settings.alwaysShowMultipleReferences).onChange(async (value) => {
       await this.plugin.updateSettings({ alwaysShowMultipleReferences: value });
     }));
-    new import_obsidian5.Setting(containerEl).setName("Virtual link suffix").setDesc("The suffix to add to auto generated virtual links.").addText((text) => text.setValue(this.plugin.settings.virtualLinkSuffix).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Значок виртуальной ссылки").setDesc("Символ, добавляемый после совпавшего названия заметки.").addText((text) => text.setValue(this.plugin.settings.virtualLinkSuffix).onChange(async (value) => {
       await this.plugin.updateSettings({ virtualLinkSuffix: value });
     }));
-    new import_obsidian5.Setting(containerEl).setName("Virtual link suffix for aliases").setDesc("The suffix to add to auto generated virtual links for aliases.").addText((text) => text.setValue(this.plugin.settings.virtualLinkAliasSuffix).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Значок виртуальной ссылки для псевдонима").setDesc("Символ, добавляемый после совпавшего псевдонима заметки.").addText((text) => text.setValue(this.plugin.settings.virtualLinkAliasSuffix).onChange(async (value) => {
       await this.plugin.updateSettings({ virtualLinkAliasSuffix: value });
     }));
-    new import_obsidian5.Setting(containerEl).setName("Use default link style for conversion").setDesc("If toggled, the default link style will be used for the conversion of virtual links to real links.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useDefaultLinkStyleForConversion).onChange(async (value) => {
+    new import_obsidian5.Setting(containerEl).setName("Использовать стандартный формат Obsidian при преобразовании").setDesc("При превращении виртуальной ссылки в обычную использует формат ссылок, выбранный в настройках Obsidian.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useDefaultLinkStyleForConversion).onChange(async (value) => {
       await this.plugin.updateSettings({ useDefaultLinkStyleForConversion: value });
       this.display();
     }));
     if (!this.plugin.settings.useDefaultLinkStyleForConversion) {
-      new import_obsidian5.Setting(containerEl).setName("Use [[Wiki-links]]").setDesc("If toggled, the virtual links will be created as wiki-links instead of markdown links.").addToggle((toggle) => toggle.setValue(!this.plugin.settings.useMarkdownLinks).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Использовать [[внутренние ссылки]]").setDesc("Создаёт ссылки вида `[[заметка]]` вместо ссылок вида `[текст](путь)`.").addToggle((toggle) => toggle.setValue(!this.plugin.settings.useMarkdownLinks).onChange(async (value) => {
         await this.plugin.updateSettings({ useMarkdownLinks: !value });
       }));
-      new import_obsidian5.Setting(containerEl).setName("Link format").setDesc("The format of the generated links.").addDropdown((dropdown) => dropdown.addOption("shortest", "Shortest").addOption("relative", "Relative").addOption("absolute", "Absolute").setValue(this.plugin.settings.linkFormat).onChange(async (value) => {
+      new import_obsidian5.Setting(containerEl).setName("Путь в создаваемой ссылке").setDesc("Определяет, какой путь записывается при преобразовании виртуальной ссылки в обычную.").addDropdown((dropdown) => dropdown.addOption("shortest", "Кратчайший").addOption("relative", "Относительный").addOption("absolute", "Полный").setValue(this.plugin.settings.linkFormat).onChange(async (value) => {
         await this.plugin.updateSettings({ linkFormat: value });
       }));
     }
