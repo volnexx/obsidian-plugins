@@ -411,6 +411,15 @@ function getGrowthFragment(card, step) {
   const limit = Math.max(0, Math.min(Math.trunc(step), units.length));
   return getCardKind(card) === "list" ? units.slice(0, limit) : units.slice(0, limit).join(" ");
 }
+function getGrowthRevealProgress(card, state) {
+  const progress = getGrowthProgress(card, state);
+  const hasAdditionalUnit = progress.step < progress.total;
+  return {
+    ...progress,
+    unitLimit: hasAdditionalUnit ? progress.step + 1 : progress.step,
+    emphasizedUnitIndex: hasAdditionalUnit ? progress.step : null
+  };
+}
 function formatCardDueTime(dueAt, available, now) {
   if (!available) return `\u0447\u0435\u0440\u0435\u0437 ${formatDuration(dueAt - now)}`;
   return dueAt <= now ? `\u043F\u0440\u043E\u0441\u0440\u043E\u0447\u0435\u043D\u043E \u043D\u0430 ${formatDuration(now - dueAt)}` : `\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E \u0434\u043E \u043F\u043E\u0434\u044A\u0451\u043C\u0430 \xB7 \u0447\u0435\u0440\u0435\u0437 ${formatDuration(dueAt - now)}`;
@@ -1102,8 +1111,13 @@ var ReviewView = class extends import_obsidian.ItemView {
     if (flashcard.querySelector(".tir-flashcard-definition")) return;
     const definition = flashcard.createDiv({ cls: "tir-flashcard-definition markdown-rendered" });
     const growthState = this.plugin.getGrowthState(card.id);
-    const unitLimit = growthState?.phase === "building" ? getGrowthProgress(card, growthState).step : null;
-    await this.renderDefinition(card, definition, unitLimit);
+    const revealProgress = growthState?.phase === "building" ? getGrowthRevealProgress(card, growthState) : null;
+    await this.renderDefinition(
+      card,
+      definition,
+      revealProgress?.unitLimit ?? null,
+      revealProgress?.emphasizedUnitIndex ?? null
+    );
     actions.empty();
     const incorrect = actions.createEl("button", { cls: "tir-answer tir-answer-wrong", text: "\u041D\u0435\u0432\u0435\u0440\u043D\u043E" });
     const correct = actions.createEl("button", { cls: "tir-answer tir-answer-correct", text: "\u0412\u0435\u0440\u043D\u043E" });
@@ -1149,21 +1163,24 @@ var ReviewView = class extends import_obsidian.ItemView {
     this.waitingFor = { cardId: action.cardId, dueAt: action.dueAt };
     this.renderWaiting(updated, correct);
   }
-  async renderDefinition(card, container, unitLimit = null) {
+  async renderDefinition(card, container, unitLimit = null, emphasizedUnitIndex = null) {
     if (getCardKind(card) === "list") {
       container.addClass("tir-list-answer");
       const list = container.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
       const items = unitLimit === null ? sortListTermsAlphabetically(card.listTerms ?? []).map((item) => formatTermForDisplay(item)) : getGrowthFragment(card, unitLimit);
-      for (const item of items) {
+      for (const [index, item] of items.entries()) {
         const row = list.createDiv({
           cls: "tir-definition-list-item markdown-rendered",
           attr: { role: "listitem" }
         });
-        await this.renderMarkdown(item, row, card.sourcePath);
+        await this.renderMarkdown(index === emphasizedUnitIndex ? `**${item}**` : item, row, card.sourcePath);
       }
       return;
     }
-    const text = unitLimit === null ? formatCardTextForDisplay(card.definition) : getGrowthFragment(card, unitLimit);
+    let text = unitLimit === null ? formatCardTextForDisplay(card.definition) : getGrowthFragment(card, unitLimit);
+    if (unitLimit !== null && emphasizedUnitIndex !== null) {
+      text = getGrowthUnits(card).slice(0, unitLimit).map((word, index) => index === emphasizedUnitIndex ? `**${word}**` : word).join(" ");
+    }
     await this.renderMarkdown(text, container, card.sourcePath);
   }
   async renderGrowthWaiting(updated, correct, feedback) {
