@@ -577,7 +577,7 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
 .tir-definition-list {
   display: flex;
   min-height: 180px;
-  flex-direction: column-reverse;
+  flex-direction: column;
   justify-content: flex-start;
   gap: 8px;
 }

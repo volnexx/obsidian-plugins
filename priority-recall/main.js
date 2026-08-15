@@ -242,13 +242,15 @@ function parseDefinitionLists(content) {
   }
   return parsed;
 }
-function shuffleListTerms(terms) {
-  const shuffled = [...terms];
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const otherIndex = Math.floor(Math.random() * (index + 1));
-    [shuffled[index], shuffled[otherIndex]] = [shuffled[otherIndex], shuffled[index]];
-  }
-  return shuffled;
+var russianTermCollator = new Intl.Collator("ru", {
+  sensitivity: "accent",
+  numeric: true
+});
+function sortListTermsAlphabetically(terms) {
+  return [...terms].sort((left, right) => russianTermCollator.compare(
+    formatTermForDisplay(left).trim(),
+    formatTermForDisplay(right).trim()
+  ));
 }
 
 // src/scheduler.ts
@@ -1020,7 +1022,7 @@ var ReviewView = class extends import_obsidian.ItemView {
     if (getCardKind(card) === "list") {
       definition.addClass("tir-list-answer");
       const list = definition.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
-      for (const item of shuffleListTerms(card.listTerms ?? [])) {
+      for (const item of sortListTermsAlphabetically(card.listTerms ?? [])) {
         const row = list.createDiv({
           cls: "tir-definition-list-item markdown-rendered",
           attr: { role: "listitem" }
