@@ -1,17 +1,8 @@
-const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter, setIcon, addIcon } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter, setIcon } = require("obsidian");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
 const { spawn } = require("child_process");
-
-const UPDATE_ALL_ICON = "updater-plugin-cycle-p";
-const UPDATE_ALL_ICON_SVG = `
-  <path d="M20 7v5h-5"/>
-  <path d="M4 17v-5h5"/>
-  <path d="M6.3 8.2A7 7 0 0 1 18.5 6.7L20 8"/>
-  <path d="M17.7 15.8A7 7 0 0 1 5.5 17.3L4 16"/>
-  <path d="M10 16V8h3a3 3 0 0 1 0 6h-3"/>
-`;
 
 const DEFAULT_SETTINGS = {
   registryRepo: "volnexx/obsidian-plugins",
@@ -144,10 +135,27 @@ module.exports = class UpdaterPlugin extends Plugin {
       this.registerEvent(this.app.workspace.on("active-leaf-change", () => { void this.refreshRestoreActions(); }));
     }
 
-    try { addIcon(UPDATE_ALL_ICON, UPDATE_ALL_ICON_SVG); } catch (e) {
-      console.warn("[Updater Plugin] Не удалось зарегистрировать значок обновления:", e);
+    const updateRibbon = this.addRibbonIcon("refresh-cw", "Обновить все наши плагины", () => this.safeUpdateAll());
+    if (updateRibbon) {
+      updateRibbon.style.position = "relative";
+      const mark = document.createElement("span");
+      mark.textContent = "P";
+      mark.setAttribute("aria-hidden", "true");
+      Object.assign(mark.style, {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: "translate(-50%, -50%)",
+        fontSize: "8px",
+        lineHeight: "1",
+        fontWeight: "800",
+        fontFamily: "var(--font-interface)",
+        color: "currentColor",
+        pointerEvents: "none",
+        zIndex: "2"
+      });
+      updateRibbon.appendChild(mark);
     }
-    this.addRibbonIcon(UPDATE_ALL_ICON, "Обновить все наши плагины", () => this.safeUpdateAll());
 
     this.addCommand({
       id: "safe-update-all-custom-plugins",
