@@ -1,9 +1,9 @@
 {
   "id": "style-settings-color-cycle",
   "name": "Style Settings — 8 тем",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "minAppVersion": "1.5.0",
-  "description": "Переключает восемь встроенных тем Minimal в контрастном порядке, быстро переходит между ними, сохраняет позицию цикла и устанавливается одним main.js.",
+  "description": "Переключает восемь встроенных тем Minimal в случайном контрастном порядке, быстро переходит между ними и сохраняет точную позицию цикла.",
   "author": "custom",
   "isDesktopOnly": false
 }
