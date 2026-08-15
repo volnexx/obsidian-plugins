@@ -54,7 +54,7 @@ jobs:
           s=open('updater-plugin/main.js',encoding='utf-8').read()
           assert 'const fs = require("fs");' not in s
           assert 'Platform.isDesktopApp' in s
-          assert 'Vault.adapter' in s
+          assert 'this.app.vault.adapter' in s
           PY
       - name: Mobile onload smoke test
         run: |
