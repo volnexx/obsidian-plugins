@@ -583,7 +583,8 @@ function isReviewCard(value) {
 }
 function isGrowthCardState(value) {
   if (!value || typeof value !== "object") return false;
-  return (value.phase === "building" || value.phase === "retention") && Number.isFinite(value.step) && value.step >= 1;
+  const validIncorrectStreak = value.incorrectStreak === void 0 || Number.isFinite(value.incorrectStreak) && value.incorrectStreak >= 0;
+  return (value.phase === "building" || value.phase === "retention") && Number.isFinite(value.step) && value.step >= 1 && validIncorrectStreak;
 }
 function getCardKind(card) {
   return card.kind === "list" ? "list" : "definition";
@@ -1195,7 +1196,7 @@ var ReviewView = class extends import_obsidian.ItemView {
     const fragment = message.createDiv({ cls: "tir-growth-feedback markdown-rendered" });
     await this.renderDefinition(updated, fragment, feedback.step);
     message.createEl("p", {
-      text: feedback.waveComplete ? "Теперь начнутся обычные этапы. Карточка останется закреплённой до успешного прохождения этапа 6." : feedback.resetToFirst ? "Прогресс сброшен до этапа 1. Следующая попытка через 5 секунд." : `Фрагмент ${feedback.step} из ${feedback.total}. Следующая попытка через 5 секунд.`
+      text: feedback.waveComplete ? "Теперь начнутся обычные этапы. Карточка останется закреплённой до успешного прохождения этапа 6." : feedback.resetToFirst ? "Две ошибки подряд. Прогресс сброшен до этапа 1. Следующая попытка через 5 секунд." : !correct ? `Первая ошибка подряд. Следующая попытка начнётся с этапа ${feedback.nextStep} через 5 секунд.` : `Фрагмент ${feedback.step} из ${feedback.total}. Следующая попытка через 5 секунд.`
     });
     message.createEl("p", {
       cls: "tir-wait-countdown",
@@ -1450,7 +1451,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     return new Set([...this.pinnedCardIds, ...this.growthCardStates.keys()]);
   }
   getGrowthSignature() {
-    return [...this.growthCardStates.entries()].sort(([left], [right]) => left.localeCompare(right, "ru")).map(([id, state]) => `${id}:${state.phase}:${state.step}`).join(",");
+    return [...this.growthCardStates.entries()].sort(([left], [right]) => left.localeCompare(right, "ru")).map(([id, state]) => `${id}:${state.phase}:${state.step}:${state.incorrectStreak ?? 0}`).join(",");
   }
   async toggleUrgentSource(path) {
     if (this.urgentSourcePaths.has(path)) {
@@ -1480,7 +1481,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       const progress = getGrowthProgress(card, { phase: "building", step: 1 });
       if (progress.total === 0) return;
       const now = Date.now();
-      this.growthCardStates.set(id, { phase: "building", step: 1 });
+      this.growthCardStates.set(id, { phase: "building", step: 1, incorrectStreak: 0 });
       this.cards[index] = {
         ...card,
         stage: 0,
@@ -1530,8 +1531,10 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       const progress = getGrowthProgress(card, growthState);
       if (progress.total > 0) {
         const waveComplete = correct && progress.step >= progress.total;
-        const nextStep = correct ? waveComplete ? progress.total : progress.step + 1 : 1;
-        this.growthCardStates.set(cardId, waveComplete ? { phase: "retention", step: progress.total } : { phase: "building", step: nextStep });
+        const incorrectStreak = correct ? 0 : Math.min(2, Math.max(0, Math.trunc(growthState.incorrectStreak ?? 0)) + 1);
+        const resetToFirst = !correct && incorrectStreak >= 2;
+        const nextStep = correct ? waveComplete ? progress.total : progress.step + 1 : resetToFirst ? 1 : Math.max(1, progress.step - 1);
+        this.growthCardStates.set(cardId, waveComplete ? { phase: "retention", step: progress.total, incorrectStreak: 0 } : { phase: "building", step: nextStep, incorrectStreak });
         const updated2 = {
           ...card,
           stage: 0,
@@ -1549,9 +1552,11 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
           card: updated2,
           growthFeedback: {
             step: correct ? waveComplete ? progress.total : nextStep : progress.step,
+            nextStep,
             total: progress.total,
             waveComplete,
-            resetToFirst: !correct
+            resetToFirst,
+            incorrectStreak
           },
           growthAutoReleased: false
         };
@@ -1641,7 +1646,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if ((rawVersion === 9 || rawVersion === 10) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if ((rawVersion === 9 || rawVersion === 10 || rawVersion === 11) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1660,13 +1665,14 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       );
     }
     const rawGrowth = raw && typeof raw === "object" ? raw.growthCardStates : null;
-    if (rawVersion === 10 && Array.isArray(rawGrowth)) {
+    if ((rawVersion === 10 || rawVersion === 11) && Array.isArray(rawGrowth)) {
       const cardIds = new Set(this.cards.map((card) => card.id));
       for (const entry of rawGrowth) {
         if (!entry || typeof entry !== "object" || typeof entry.cardId !== "string" || !cardIds.has(entry.cardId) || !isGrowthCardState(entry)) continue;
         this.growthCardStates.set(entry.cardId, {
           phase: entry.phase,
-          step: Math.max(1, Math.trunc(entry.step))
+          step: Math.max(1, Math.trunc(entry.step)),
+          incorrectStreak: Math.min(2, Math.max(0, Math.trunc(entry.incorrectStreak ?? 0)))
         });
       }
     }
@@ -1944,7 +1950,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 10,
+        version: 11,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,
@@ -1957,7 +1963,8 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         growthCardStates: [...this.growthCardStates.entries()].sort(([left], [right]) => left.localeCompare(right, "ru")).map(([cardId, state]) => ({
           cardId,
           phase: state.phase,
-          step: state.step
+          step: state.step,
+          incorrectStreak: state.incorrectStreak ?? 0
         }))
       };
       await this.saveData(data);
