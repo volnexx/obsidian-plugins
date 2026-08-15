@@ -331,6 +331,55 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   stroke-width: 2;
 }
 
+.tir-growth-toggle,
+.tir-review-growth-toggle {
+  color: var(--text-muted) !important;
+}
+
+.tir-growth-toggle.is-active,
+.tir-review-growth-toggle.is-active {
+  color: var(--interactive-accent) !important;
+}
+
+.tir-growth-icon {
+  width: 22px !important;
+  height: 22px !important;
+  overflow: visible;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8 !important;
+}
+
+.tir-growth-main-bubble,
+.tir-growth-small-bubble,
+.tir-growth-seed {
+  fill: color-mix(in srgb, currentColor 12%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.tir-growth-toggle:hover .tir-growth-main-bubble,
+.tir-growth-toggle:focus-visible .tir-growth-main-bubble,
+.tir-review-growth-toggle:hover .tir-growth-main-bubble,
+.tir-review-growth-toggle:focus-visible .tir-growth-main-bubble,
+.tir-growth-toggle.is-active .tir-growth-main-bubble,
+.tir-review-growth-toggle.is-active .tir-growth-main-bubble {
+  animation: tir-growth-rise 900ms ease-out both;
+}
+
+@keyframes tir-growth-rise {
+  from {
+    opacity: 0.35;
+    transform: translateY(5px) scale(0.45);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .tir-urgent-toggle:hover,
 .tir-urgent-toggle:focus-visible {
   border-left-color: var(--background-modifier-border);
@@ -490,6 +539,14 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   color: var(--text-muted) !important;
   -webkit-text-fill-color: currentColor !important;
   box-shadow: none;
+}
+
+.tir-review-priority-actions .tir-review-pin-toggle:not(.tir-review-growth-toggle) {
+  border-radius: 0;
+}
+
+.tir-review-priority-actions .tir-review-growth-toggle {
+  border-radius: 0 var(--button-radius) var(--button-radius) 0;
 }
 
 .tir-review-pin-toggle:hover:not(:disabled),
@@ -699,6 +756,21 @@ body:not(.is-mobile) .workspace-split.mod-right-split:has(
   border-radius: var(--radius-l);
   background: var(--background-primary-alt);
   text-align: center;
+}
+
+.tir-growth-feedback {
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 52%, var(--background-modifier-border));
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  text-align: left;
+}
+
+.tir-growth-feedback.tir-list-answer,
+.tir-growth-feedback .tir-definition-list {
+  min-height: 0;
 }
 
 .tir-result-correct {

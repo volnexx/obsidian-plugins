@@ -86,6 +86,35 @@ function renderMultiPinIcon(button, crossedOut = false) {
     (0, import_obsidian.setIcon)(pin, crossedOut ? "pin-off" : "pin");
   }
 }
+function renderGrowthIcon(button) {
+  button.empty();
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = button.ownerDocument.createElementNS(namespace, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("tir-growth-icon");
+  const liquid = button.ownerDocument.createElementNS(namespace, "path");
+  liquid.setAttribute("d", "M3 18c2.2-2.2 4.2 2.2 6.4 0s4.2 2.2 6.4 0 4.2 2.2 5.2.7");
+  liquid.classList.add("tir-growth-liquid");
+  const bubble = button.ownerDocument.createElementNS(namespace, "circle");
+  bubble.setAttribute("cx", "12");
+  bubble.setAttribute("cy", "8");
+  bubble.setAttribute("r", "4");
+  bubble.classList.add("tir-growth-main-bubble");
+  const smallBubble = button.ownerDocument.createElementNS(namespace, "circle");
+  smallBubble.setAttribute("cx", "7.5");
+  smallBubble.setAttribute("cy", "14");
+  smallBubble.setAttribute("r", "1.25");
+  smallBubble.classList.add("tir-growth-small-bubble");
+  const seed = button.ownerDocument.createElementNS(namespace, "circle");
+  seed.setAttribute("cx", "16.5");
+  seed.setAttribute("cy", "14.5");
+  seed.setAttribute("r", "1");
+  seed.classList.add("tir-growth-seed");
+  svg.append(liquid, bubble, smallBubble, seed);
+  button.append(svg);
+}
 function createScrollingTerm(container, term) {
   const viewport = container.createSpan({ cls: "tir-term" });
   const text = viewport.createSpan({ cls: "tir-term-text", text: term });
@@ -272,6 +301,8 @@ var REVIEW_INTERVALS = [
   3 * DAY,
   9 * DAY
 ];
+var GROWTH_INTERVAL = 5 * SECOND;
+var GROWTH_AUTO_RELEASE_STAGE = 6;
 var REST_WINDOW = 6 * MINUTE;
 function clampStage(stage) {
   if (!Number.isFinite(stage)) return 0;
@@ -362,6 +393,23 @@ function formatDuration(milliseconds) {
 }
 function stageIntervalLabel(stage) {
   return formatDuration(REVIEW_INTERVALS[clampStage(stage)] ?? REVIEW_INTERVALS[0]);
+}
+function getGrowthUnits(card) {
+  if (getCardKind(card) === "list") {
+    return sortListTermsAlphabetically(card.listTerms ?? []).map((item) => formatTermForDisplay(item).trim()).filter((item) => item.length > 0);
+  }
+  return formatCardTextForDisplay(card.definition).trim().split(/\s+/u).filter((word) => word.length > 0);
+}
+function getGrowthProgress(card, state) {
+  const units = getGrowthUnits(card);
+  const total = units.length;
+  const step = total === 0 ? 0 : Math.max(1, Math.min(Math.trunc(state?.step ?? 1), total));
+  return { units, total, step };
+}
+function getGrowthFragment(card, step) {
+  const units = getGrowthUnits(card);
+  const limit = Math.max(0, Math.min(Math.trunc(step), units.length));
+  return getCardKind(card) === "list" ? units.slice(0, limit) : units.slice(0, limit).join(" ");
 }
 function formatCardDueTime(dueAt, available, now) {
   if (!available) return `\u0447\u0435\u0440\u0435\u0437 ${formatDuration(dueAt - now)}`;
@@ -524,6 +572,10 @@ function isReviewCard(value) {
   const card = value;
   return typeof card.id === "string" && typeof card.term === "string" && typeof card.definition === "string" && typeof card.sourcePath === "string" && typeof card.occurrence === "number" && typeof card.stage === "number" && typeof card.dueAt === "number";
 }
+function isGrowthCardState(value) {
+  if (!value || typeof value !== "object") return false;
+  return (value.phase === "building" || value.phase === "retention") && Number.isFinite(value.step) && value.step >= 1;
+}
 function getCardKind(card) {
   return card.kind === "list" ? "list" : "definition";
 }
@@ -567,17 +619,18 @@ var QueueView = class extends import_obsidian.ItemView {
   refresh(force = false) {
     const now = Date.now();
     const activeSource = this.plugin.getActiveDefinitionSource();
+    const priorityPinnedCardIds = this.plugin.getPriorityPinnedCardIds();
     const partition = partitionCardsByPriority(
       this.plugin.cards,
       this.plugin.urgentSourcePaths,
-      this.plugin.pinnedCardIds,
+      priorityPinnedCardIds,
       now
     );
     const { pinnedAvailable, urgentAvailable, regularAvailable, upcoming } = partition;
     const availableCount = pinnedAvailable.length + urgentAvailable.length + regularAvailable.length;
     const cardSignature = (card) => `${card.id}@${card.dueAt}`;
     const activeSourceSignature = activeSource ? `${activeSource.path}@${this.plugin.isUrgentSource(activeSource.path) ? "urgent" : "regular"}` : "none";
-    const signature = `active-source:${activeSourceSignature}|pinned:${pinnedAvailable.map(cardSignature).join(",")}|urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned-ids:${[...this.plugin.pinnedCardIds].sort().join(",")}`;
+    const signature = `active-source:${activeSourceSignature}|pinned:${pinnedAvailable.map(cardSignature).join(",")}|urgent:${urgentAvailable.map(cardSignature).join(",")}|regular:${regularAvailable.map(cardSignature).join(",")}|upcoming:${upcoming.map(cardSignature).join(",")}|pinned-ids:${[...priorityPinnedCardIds].sort().join(",")}|growth:${this.plugin.getGrowthSignature()}`;
     if (!force && signature === this.structureSignature) {
       this.updateTimeLabels(now);
       return;
@@ -759,6 +812,7 @@ var QueueView = class extends import_obsidian.ItemView {
     }
     const isUrgent = this.plugin.isUrgentSource(card.sourcePath);
     const isPinned = this.plugin.isPinnedCard(card.id);
+    const isGrowing = this.plugin.isGrowthCard(card.id);
     const actions = entry.createDiv({ cls: "tir-entry-actions" });
     if (isUrgent) {
       const remove = actions.createEl("button", {
@@ -800,6 +854,19 @@ var QueueView = class extends import_obsidian.ItemView {
     (0, import_obsidian.setIcon)(pin, isPinned ? "pin-off" : "pin");
     pin.addEventListener("click", () => {
       void this.plugin.togglePinnedCard(card.id);
+    });
+    const growth = actions.createEl("button", {
+      cls: isGrowing ? "tir-pin-toggle tir-growth-toggle is-active" : "tir-pin-toggle tir-growth-toggle",
+      attr: {
+        type: "button",
+        "aria-label": isGrowing ? `Снять выращивание определения ${formatTermForDisplay(card.term)}` : `Начать выращивание определения ${formatTermForDisplay(card.term)}`,
+        "aria-pressed": String(isGrowing),
+        title: isGrowing ? "Снять режим выращивания определения" : "Вырастить определение по одному слову"
+      }
+    });
+    renderGrowthIcon(growth);
+    growth.addEventListener("click", () => {
+      void this.plugin.toggleGrowthCard(card.id);
     });
   }
   applySearchFilter() {
@@ -911,10 +978,17 @@ var ReviewView = class extends import_obsidian.ItemView {
     const wrapper = root.createDiv({ cls: "tir-review" });
     const top = wrapper.createDiv({ cls: "tir-review-top" });
     const topInfo = top.createDiv({ cls: "tir-review-top-info" });
-    topInfo.createSpan({ text: `\u042D\u0442\u0430\u043F ${card.stage + 1} \u0438\u0437 ${REVIEW_INTERVALS.length}` });
-    topInfo.createSpan({
-      text: card.stage === REVIEW_INTERVALS.length - 1 ? "\u0446\u0438\u043A\u043B: \u043A\u0430\u0436\u0434\u044B\u0435 9 \u0434\u043D\u0435\u0439" : `\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B: ${stageIntervalLabel(card.stage)}`
-    });
+    const growthState = this.plugin.getGrowthState(card.id);
+    if (growthState?.phase === "building") {
+      const progress = getGrowthProgress(card, growthState);
+      topInfo.createSpan({ text: `Рост ${progress.step} из ${progress.total}` });
+      topInfo.createSpan({ text: "интервал роста: 5 с" });
+    } else {
+      topInfo.createSpan({ text: `\u042D\u0442\u0430\u043F ${card.stage + 1} \u0438\u0437 ${REVIEW_INTERVALS.length}` });
+      topInfo.createSpan({
+        text: card.stage === REVIEW_INTERVALS.length - 1 ? "\u0446\u0438\u043A\u043B: \u043A\u0430\u0436\u0434\u044B\u0435 9 \u0434\u043D\u0435\u0439" : `\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B: ${stageIntervalLabel(card.stage)}`
+      });
+    }
     const priorityActions = top.createDiv({ cls: "tir-review-priority-actions" });
     const urgent = priorityActions.createEl("button", {
       cls: "tir-review-urgent-toggle",
@@ -933,6 +1007,14 @@ var ReviewView = class extends import_obsidian.ItemView {
       void this.plugin.togglePinnedCard(card.id);
     });
     this.updatePinButton(pin, card);
+    const growth = priorityActions.createEl("button", {
+      cls: "tir-review-pin-toggle tir-review-growth-toggle",
+      attr: { type: "button" }
+    });
+    growth.addEventListener("click", () => {
+      void this.plugin.toggleGrowthCard(card.id);
+    });
+    this.updateGrowthButton(growth, card);
     const flashcard = wrapper.createDiv({ cls: "tir-flashcard" });
     const term = flashcard.createDiv({ cls: "tir-flashcard-term markdown-rendered" });
     await this.renderMarkdown(formatTermForDisplay(card.term), term, card.sourcePath);
@@ -967,7 +1049,7 @@ var ReviewView = class extends import_obsidian.ItemView {
       this.plugin.cards,
       card.id,
       this.plugin.urgentSourcePaths,
-      this.plugin.pinnedCardIds,
+      this.plugin.getPriorityPinnedCardIds(),
       Date.now()
     );
     const cardNavigation = flashcard.createDiv({ cls: "tir-card-navigation" });
@@ -1019,19 +1101,9 @@ var ReviewView = class extends import_obsidian.ItemView {
   async revealAnswer(card, flashcard, actions) {
     if (flashcard.querySelector(".tir-flashcard-definition")) return;
     const definition = flashcard.createDiv({ cls: "tir-flashcard-definition markdown-rendered" });
-    if (getCardKind(card) === "list") {
-      definition.addClass("tir-list-answer");
-      const list = definition.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
-      for (const item of sortListTermsAlphabetically(card.listTerms ?? [])) {
-        const row = list.createDiv({
-          cls: "tir-definition-list-item markdown-rendered",
-          attr: { role: "listitem" }
-        });
-        await this.renderMarkdown(formatTermForDisplay(item), row, card.sourcePath);
-      }
-    } else {
-      await this.renderMarkdown(formatCardTextForDisplay(card.definition), definition, card.sourcePath);
-    }
+    const growthState = this.plugin.getGrowthState(card.id);
+    const unitLimit = growthState?.phase === "building" ? getGrowthProgress(card, growthState).step : null;
+    await this.renderDefinition(card, definition, unitLimit);
     actions.empty();
     const incorrect = actions.createEl("button", { cls: "tir-answer tir-answer-wrong", text: "\u041D\u0435\u0432\u0435\u0440\u043D\u043E" });
     const correct = actions.createEl("button", { cls: "tir-answer tir-answer-correct", text: "\u0412\u0435\u0440\u043D\u043E" });
@@ -1043,9 +1115,16 @@ var ReviewView = class extends import_obsidian.ItemView {
     });
   }
   async submit(cardId, correct) {
-    const updated = await this.plugin.reviewCard(cardId, correct);
-    if (!updated) {
+    const result = await this.plugin.reviewCard(cardId, correct);
+    if (!result) {
       await this.renderQuestion();
+      return;
+    }
+    const updated = result.card;
+    if (result.growthFeedback) {
+      this.cardId = cardId;
+      this.waitingFor = { cardId, dueAt: updated.dueAt };
+      await this.renderGrowthWaiting(updated, correct, result.growthFeedback);
       return;
     }
     const action = chooseReviewCompletionAction(
@@ -1053,7 +1132,7 @@ var ReviewView = class extends import_obsidian.ItemView {
       cardId,
       !correct,
       this.plugin.urgentSourcePaths,
-      this.plugin.pinnedCardIds,
+      this.plugin.getPriorityPinnedCardIds(),
       Date.now()
     );
     if (action.type === "open") {
@@ -1069,6 +1148,46 @@ var ReviewView = class extends import_obsidian.ItemView {
     this.cardId = action.cardId;
     this.waitingFor = { cardId: action.cardId, dueAt: action.dueAt };
     this.renderWaiting(updated, correct);
+  }
+  async renderDefinition(card, container, unitLimit = null) {
+    if (getCardKind(card) === "list") {
+      container.addClass("tir-list-answer");
+      const list = container.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
+      const items = unitLimit === null ? sortListTermsAlphabetically(card.listTerms ?? []).map((item) => formatTermForDisplay(item)) : getGrowthFragment(card, unitLimit);
+      for (const item of items) {
+        const row = list.createDiv({
+          cls: "tir-definition-list-item markdown-rendered",
+          attr: { role: "listitem" }
+        });
+        await this.renderMarkdown(item, row, card.sourcePath);
+      }
+      return;
+    }
+    const text = unitLimit === null ? formatCardTextForDisplay(card.definition) : getGrowthFragment(card, unitLimit);
+    await this.renderMarkdown(text, container, card.sourcePath);
+  }
+  async renderGrowthWaiting(updated, correct, feedback) {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("tir-review-root");
+    const message = root.createDiv({
+      cls: correct ? "tir-review-message tir-result-correct tir-growth-result" : "tir-review-message tir-result-wrong tir-growth-result"
+    });
+    const title = feedback.waveComplete ? "Волна изучения завершена" : correct ? getCardKind(updated) === "list" ? "Добавлен следующий пункт" : "Добавлено новое слово" : "Повтори этот фрагмент";
+    message.createEl("h2", { text: title });
+    const fragment = message.createDiv({ cls: "tir-growth-feedback markdown-rendered" });
+    await this.renderDefinition(updated, fragment, feedback.step);
+    message.createEl("p", {
+      text: feedback.waveComplete ? "Теперь начнутся обычные этапы. Карточка останется закреплённой до успешного прохождения этапа 6." : `Фрагмент ${feedback.step} из ${feedback.total}. Следующая попытка через 5 секунд.`
+    });
+    message.createEl("p", {
+      cls: "tir-wait-countdown",
+      text: `Ожидание: ${formatDuration(updated.dueAt - Date.now())}`
+    });
+    message.createEl("p", {
+      cls: "tir-next-date",
+      text: `Назначено на ${formatDateTime(updated.dueAt)}`
+    });
   }
   renderWaiting(updated, correct) {
     const root = this.contentEl;
@@ -1121,6 +1240,8 @@ var ReviewView = class extends import_obsidian.ItemView {
     if (urgent) this.updateUrgentButton(urgent, card);
     const pin = this.contentEl.querySelector(".tir-review-pin-toggle");
     if (pin) this.updatePinButton(pin, card);
+    const growth = this.contentEl.querySelector(".tir-review-growth-toggle");
+    if (growth) this.updateGrowthButton(growth, card);
     const navigation = this.getNavigation();
     const previous = this.contentEl.querySelector(
       '[data-navigation-direction="previous"]'
@@ -1136,7 +1257,7 @@ var ReviewView = class extends import_obsidian.ItemView {
       this.plugin.cards,
       this.cardId,
       this.plugin.urgentSourcePaths,
-      this.plugin.pinnedCardIds,
+      this.plugin.getPriorityPinnedCardIds(),
       Date.now()
     ) : { previousCardId: null, nextCardId: null };
   }
@@ -1163,6 +1284,18 @@ var ReviewView = class extends import_obsidian.ItemView {
     );
     button.title = isPinned ? "\u041E\u0442\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443" : "\u0417\u0430\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443";
     (0, import_obsidian.setIcon)(button, isPinned ? "pin-off" : "pin");
+  }
+  updateGrowthButton(button, card) {
+    const isGrowing = this.plugin.isGrowthCard(card.id);
+    button.disabled = false;
+    button.classList.toggle("is-active", isGrowing);
+    button.setAttribute("aria-pressed", String(isGrowing));
+    button.setAttribute(
+      "aria-label",
+      isGrowing ? `Снять выращивание определения ${formatTermForDisplay(card.term)}` : `Начать выращивание определения ${formatTermForDisplay(card.term)}`
+    );
+    button.title = isGrowing ? "Снять режим выращивания определения" : "Вырастить определение по одному слову";
+    renderGrowthIcon(button);
   }
 };
 var TermIntervalReviewSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -1207,6 +1340,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   cards = [];
   urgentSourcePaths = /* @__PURE__ */ new Set();
   pinnedCardIds = /* @__PURE__ */ new Set();
+  growthCardStates = /* @__PURE__ */ new Map();
   activeSourcePath = null;
   fileStates = {};
   settings = { ...DEFAULT_SETTINGS };
@@ -1289,6 +1423,18 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   isPinnedCard(id) {
     return this.pinnedCardIds.has(id);
   }
+  isGrowthCard(id) {
+    return this.growthCardStates.has(id);
+  }
+  getGrowthState(id) {
+    return this.growthCardStates.get(id) ?? null;
+  }
+  getPriorityPinnedCardIds() {
+    return new Set([...this.pinnedCardIds, ...this.growthCardStates.keys()]);
+  }
+  getGrowthSignature() {
+    return [...this.growthCardStates.entries()].sort(([left], [right]) => left.localeCompare(right, "ru")).map(([id, state]) => `${id}:${state.phase}:${state.step}`).join(",");
+  }
   async toggleUrgentSource(path) {
     if (this.urgentSourcePaths.has(path)) {
       this.urgentSourcePaths.delete(path);
@@ -1306,6 +1452,30 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     await this.persistNow();
     this.refreshViews(true);
     this.refreshReviewPriorityControls();
+  }
+  async toggleGrowthCard(id) {
+    const index = this.cards.findIndex((card) => card.id === id);
+    const card = this.cards[index];
+    if (index < 0 || !card) return;
+    if (this.growthCardStates.has(id)) {
+      this.growthCardStates.delete(id);
+    } else {
+      const progress = getGrowthProgress(card, { phase: "building", step: 1 });
+      if (progress.total === 0) return;
+      const now = Date.now();
+      this.growthCardStates.set(id, { phase: "building", step: 1 });
+      this.cards[index] = {
+        ...card,
+        stage: 0,
+        dueAt: now,
+        suppressSleepWindowEarlyReview: false,
+        updatedAt: now
+      };
+    }
+    this.clearQueueSearch();
+    await this.persistNow();
+    this.refreshViews(true);
+    this.refreshReviewCard(id);
   }
   async updateSleepSetting(key, value) {
     this.settings = normalizeSettings({ ...this.settings, [key]: value });
@@ -1338,11 +1508,46 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     const card = this.cards[index];
     if (index < 0 || !card) return null;
     const now = Date.now();
-    const updated = isSleepWindowEarlyReview(card, now) ? scheduleSleepWindowReview(card, now, correct) : correct ? scheduleCorrect(card, now) : scheduleIncorrect(card, now);
+    const growthState = this.getGrowthState(cardId);
+    if (growthState?.phase === "building") {
+      const progress = getGrowthProgress(card, growthState);
+      if (progress.total > 0) {
+        const waveComplete = correct && progress.step >= progress.total;
+        const nextStep = correct && !waveComplete ? progress.step + 1 : progress.step;
+        this.growthCardStates.set(cardId, waveComplete ? { phase: "retention", step: progress.total } : { phase: "building", step: nextStep });
+        const updated2 = {
+          ...card,
+          stage: 0,
+          dueAt: now + GROWTH_INTERVAL,
+          suppressSleepWindowEarlyReview: false,
+          updatedAt: now,
+          lastReviewedAt: now,
+          correctCount: card.correctCount + (correct ? 1 : 0),
+          incorrectCount: card.incorrectCount + (correct ? 0 : 1)
+        };
+        this.cards[index] = updated2;
+        await this.persistNow();
+        this.refreshViews(true);
+        return {
+          card: updated2,
+          growthFeedback: {
+            step: waveComplete ? progress.total : nextStep,
+            total: progress.total,
+            waveComplete
+          },
+          growthAutoReleased: false
+        };
+      }
+      this.growthCardStates.delete(cardId);
+    }
+    const sleepWindowReview = isSleepWindowEarlyReview(card, now);
+    const updated = sleepWindowReview ? scheduleSleepWindowReview(card, now, correct) : correct ? scheduleCorrect(card, now) : scheduleIncorrect(card, now);
+    const growthAutoReleased = growthState?.phase === "retention" && correct && !sleepWindowReview && updated.stage >= GROWTH_AUTO_RELEASE_STAGE;
+    if (growthAutoReleased) this.growthCardStates.delete(cardId);
     this.cards[index] = updated;
     await this.persistNow();
     this.refreshViews(true);
-    return updated;
+    return { card: updated, growthFeedback: null, growthAutoReleased };
   }
   async initializeWorkspace() {
     try {
@@ -1418,7 +1623,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if (rawVersion === 9 && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if ((rawVersion === 9 || rawVersion === 10) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1435,6 +1640,17 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       this.pinnedCardIds = new Set(
         rawPinned.filter((id) => typeof id === "string" && cardIds.has(id))
       );
+    }
+    const rawGrowth = raw && typeof raw === "object" ? raw.growthCardStates : null;
+    if (rawVersion === 10 && Array.isArray(rawGrowth)) {
+      const cardIds = new Set(this.cards.map((card) => card.id));
+      for (const entry of rawGrowth) {
+        if (!entry || typeof entry !== "object" || typeof entry.cardId !== "string" || !cardIds.has(entry.cardId) || !isGrowthCardState(entry)) continue;
+        this.growthCardStates.set(entry.cardId, {
+          phase: entry.phase,
+          step: Math.max(1, Math.trunc(entry.step))
+        });
+      }
     }
   }
   async synchronizeAll(showNotice, force) {
@@ -1469,6 +1685,12 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     for (const cardId of [...this.pinnedCardIds]) {
       if (!cardIds.has(cardId)) {
         this.pinnedCardIds.delete(cardId);
+        dataChanged = true;
+      }
+    }
+    for (const cardId of [...this.growthCardStates.keys()]) {
+      if (!cardIds.has(cardId)) {
+        this.growthCardStates.delete(cardId);
         dataChanged = true;
       }
     }
@@ -1563,6 +1785,9 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       for (const cardId of [...this.pinnedCardIds]) {
         if (!cardIds.has(cardId)) this.pinnedCardIds.delete(cardId);
       }
+      for (const cardId of [...this.growthCardStates.keys()]) {
+        if (!cardIds.has(cardId)) this.growthCardStates.delete(cardId);
+      }
     }
     this.fileStates[file.path] = currentState;
     if (persist) {
@@ -1602,9 +1827,16 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         pinnedChanged = true;
       }
     }
-    if (before !== this.cards.length || stateChanged || urgentChanged || pinnedChanged || activeSourceDeleted) {
+    let growthChanged = false;
+    for (const cardId of [...this.growthCardStates.keys()]) {
+      if (!cardIds.has(cardId)) {
+        this.growthCardStates.delete(cardId);
+        growthChanged = true;
+      }
+    }
+    if (before !== this.cards.length || stateChanged || urgentChanged || pinnedChanged || growthChanged || activeSourceDeleted) {
       await this.persistNow();
-      if (before !== this.cards.length || urgentChanged || pinnedChanged || activeSourceDeleted) {
+      if (before !== this.cards.length || urgentChanged || pinnedChanged || growthChanged || activeSourceDeleted) {
         this.refreshViews(true);
         this.refreshReviewPriorityControls();
       }
@@ -1694,7 +1926,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 9,
+        version: 10,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,
@@ -1703,7 +1935,12 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         ),
         pinnedCardIds: [...this.pinnedCardIds].sort(
           (left, right) => left.localeCompare(right, "ru")
-        )
+        ),
+        growthCardStates: [...this.growthCardStates.entries()].sort(([left], [right]) => left.localeCompare(right, "ru")).map(([cardId, state]) => ({
+          cardId,
+          phase: state.phase,
+          step: state.step
+        }))
       };
       await this.saveData(data);
     });
@@ -1717,6 +1954,11 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
   refreshReviewPriorityControls() {
     for (const leaf of this.app.workspace.getLeavesOfType(CARD_VIEW_TYPE)) {
       if (leaf.view instanceof ReviewView) leaf.view.refreshPriorityControls();
+    }
+  }
+  refreshReviewCard(cardId) {
+    for (const leaf of this.app.workspace.getLeavesOfType(CARD_VIEW_TYPE)) {
+      if (leaf.view instanceof ReviewView && leaf.view.cardId === cardId && leaf.view.waitingFor === null) void leaf.view.renderQuestion();
     }
   }
   tickViews() {
