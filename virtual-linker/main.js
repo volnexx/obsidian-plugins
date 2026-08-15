@@ -650,13 +650,14 @@ var GlossaryLinker = class extends import_obsidian3.MarkdownRenderChild {
               i += char.length;
             }
             matches = VirtualMatch.sort(matches);
+            matches = VirtualMatch.filterOverlapping(matches, false);
             if (this.settings.excludeLinksToRealLinkedFiles) {
               matches = VirtualMatch.filterAlreadyLinked(matches, explicitlyLinkedFiles);
             }
             if (this.settings.onlyLinkOnce) {
               matches = VirtualMatch.filterAlreadyLinked(matches, linkedFiles);
+              matches = VirtualMatch.filterOverlapping(matches, true);
             }
-            matches = VirtualMatch.filterOverlapping(matches, this.settings.onlyLinkOnce);
             const parent = childNode.parentElement;
             let lastTo = 0;
             matches.forEach((match) => {
@@ -1369,13 +1370,14 @@ var AutoLinkerPlugin = class {
           }
         }
       });
+      matches = VirtualMatch.filterOverlapping(matches, false, excludedIntervalTree);
       if (this.settings.excludeLinksToRealLinkedFiles) {
         matches = VirtualMatch.filterAlreadyLinked(matches, explicitlyLinkedFiles);
       }
       if (this.settings.onlyLinkOnce) {
         matches = VirtualMatch.filterAlreadyLinked(matches, alreadyLinkedFiles);
+        matches = VirtualMatch.filterOverlapping(matches, true);
       }
-      matches = VirtualMatch.filterOverlapping(matches, this.settings.onlyLinkOnce, excludedIntervalTree);
       matches.forEach((addition) => addition.files.forEach((f) => alreadyLinkedFiles.add(f)));
       const cursorPos = view.state.selection.main.from;
       const excludeLine = viewIsActive && this.settings.excludeLinksInCurrentLine;
