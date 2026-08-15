@@ -428,6 +428,22 @@ var LinkerCache = class {
 };
 
 // linker/virtualLinkDom.ts
+var preserveOriginalAppearance = (element) => {
+  const rules = [
+    ["color", "inherit"],
+    ["background", "none"],
+    ["background-color", "transparent"],
+    ["border", "0"],
+    ["box-shadow", "none"],
+    ["filter", "none"],
+    ["opacity", "1"],
+    ["outline", "0"],
+    ["text-decoration", "none"],
+    ["text-shadow", "none"]
+  ];
+  rules.forEach(([property, value]) => element.style.setProperty(property, value, "important"));
+  return element;
+};
 var VirtualMatch = class {
   constructor(id, originText, from, to, files, isAlias, isSubWord, settings) {
     this.id = id;
@@ -466,12 +482,12 @@ var VirtualMatch = class {
     link.setAttribute("to", this.to.toString());
     link.setAttribute("origin-text", this.originText);
     link.classList.add("internal-link", "virtual-link-a");
-    return link;
+    return preserveOriginalAppearance(link);
   }
   getLinkRootSpan() {
     const span = document.createElement("span");
     span.classList.add("glossary-entry", "virtual-link", "virtual-link-span");
-    return span;
+    return preserveOriginalAppearance(span);
   }
   getMultipleReferencesSpan(files) {
     const spanReferences = document.createElement("span");
@@ -483,7 +499,7 @@ var VirtualMatch = class {
       if (index === 0) {
         const bracket = document.createElement("span");
         bracket.textContent = this.isSubWord ? "[" : " [";
-        spanReferences.appendChild(bracket);
+        spanReferences.appendChild(preserveOriginalAppearance(bracket));
       }
       let linkText = ` ${index + 1} `;
       if (index < files.length - 1) {
@@ -495,16 +511,16 @@ var VirtualMatch = class {
       if (index == files.length - 1) {
         const bracket = document.createElement("span");
         bracket.textContent = "]";
-        spanReferences.appendChild(bracket);
+        spanReferences.appendChild(preserveOriginalAppearance(bracket));
       }
     });
-    return spanReferences;
+    return preserveOriginalAppearance(spanReferences);
   }
   getMultipleReferencesIndicatorSpan() {
     const spanIndicator = document.createElement("span");
     spanIndicator.textContent = " [...]";
     spanIndicator.classList.add("multiple-files-indicator");
-    return spanIndicator;
+    return preserveOriginalAppearance(spanIndicator);
   }
   getIconSpan() {
     var _a;
@@ -513,7 +529,7 @@ var VirtualMatch = class {
       let icon = document.createElement("sup");
       icon.textContent = suffix;
       icon.classList.add("linker-suffix-icon");
-      return icon;
+      return preserveOriginalAppearance(icon);
     }
     return null;
   }
@@ -1459,8 +1475,8 @@ var DEFAULT_SETTINGS = {
   excludeLinksToOwnNote: true,
   fixIMEProblem: false,
   excludeLinksInCurrentLine: false,
-  onlyLinkOnce: true,
-  excludeLinksToRealLinkedFiles: true,
+  onlyLinkOnce: false,
+  excludeLinksToRealLinkedFiles: false,
   includeAliases: true,
   alwaysShowMultipleReferences: false
 };
@@ -1797,7 +1813,15 @@ var LinkerPlugin = class extends import_obsidian5.Plugin {
   }
   async loadSettings() {
     var _a;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const savedSettings = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings);
+    if (!(savedSettings && savedSettings.showAllLongestMatchesMigration === 1)) {
+      this.settings.onlyLinkOnce = false;
+      this.settings.excludeLinksToRealLinkedFiles = false;
+      this.settings.applyDefaultLinkStyling = false;
+      this.settings.showAllLongestMatchesMigration = 1;
+      await this.saveData(this.settings);
+    }
     const fileContent = await this.app.vault.adapter.read(this.app.vault.configDir + "/app.json");
     const appSettings = JSON.parse(fileContent);
     this.settings.defaultUseMarkdownLinks = appSettings.useMarkdownLinks;
