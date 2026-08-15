@@ -1195,7 +1195,7 @@ var ReviewView = class extends import_obsidian.ItemView {
     const fragment = message.createDiv({ cls: "tir-growth-feedback markdown-rendered" });
     await this.renderDefinition(updated, fragment, feedback.step);
     message.createEl("p", {
-      text: feedback.waveComplete ? "Теперь начнутся обычные этапы. Карточка останется закреплённой до успешного прохождения этапа 6." : `Фрагмент ${feedback.step} из ${feedback.total}. Следующая попытка через 5 секунд.`
+      text: feedback.waveComplete ? "Теперь начнутся обычные этапы. Карточка останется закреплённой до успешного прохождения этапа 6." : feedback.resetToFirst ? "Прогресс сброшен до этапа 1. Следующая попытка через 5 секунд." : `Фрагмент ${feedback.step} из ${feedback.total}. Следующая попытка через 5 секунд.`
     });
     message.createEl("p", {
       cls: "tir-wait-countdown",
@@ -1530,7 +1530,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       const progress = getGrowthProgress(card, growthState);
       if (progress.total > 0) {
         const waveComplete = correct && progress.step >= progress.total;
-        const nextStep = correct && !waveComplete ? progress.step + 1 : progress.step;
+        const nextStep = correct ? waveComplete ? progress.total : progress.step + 1 : 1;
         this.growthCardStates.set(cardId, waveComplete ? { phase: "retention", step: progress.total } : { phase: "building", step: nextStep });
         const updated2 = {
           ...card,
@@ -1548,9 +1548,10 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
         return {
           card: updated2,
           growthFeedback: {
-            step: waveComplete ? progress.total : nextStep,
+            step: correct ? waveComplete ? progress.total : nextStep : progress.step,
             total: progress.total,
-            waveComplete
+            waveComplete,
+            resetToFirst: !correct
           },
           growthAutoReleased: false
         };
