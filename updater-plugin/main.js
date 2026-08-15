@@ -1,8 +1,17 @@
-const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter, setIcon } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice, requestUrl, FileSystemAdapter, setIcon, addIcon } = require("obsidian");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
 const { spawn } = require("child_process");
+
+const UPDATE_ALL_ICON = "updater-package-update";
+const UPDATE_ALL_ICON_SVG = `
+  <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l5 2.86a2 2 0 0 0 2 0l2-1.14"/>
+  <path d="m3.3 7 8.7 5 8.7-5"/>
+  <path d="M12 22V12"/>
+  <path d="M17 14v7"/>
+  <path d="m14 18 3 3 3-3"/>
+`;
 
 const DEFAULT_SETTINGS = {
   registryRepo: "volnexx/obsidian-plugins",
@@ -135,7 +144,10 @@ module.exports = class UpdaterPlugin extends Plugin {
       this.registerEvent(this.app.workspace.on("active-leaf-change", () => { void this.refreshRestoreActions(); }));
     }
 
-    this.addRibbonIcon("refresh-cw", "Обновить все наши плагины", () => this.safeUpdateAll());
+    try { addIcon(UPDATE_ALL_ICON, UPDATE_ALL_ICON_SVG); } catch (e) {
+      console.warn("[Updater Plugin] Не удалось зарегистрировать значок обновления:", e);
+    }
+    this.addRibbonIcon(UPDATE_ALL_ICON, "Обновить все наши плагины", () => this.safeUpdateAll());
 
     this.addCommand({
       id: "safe-update-all-custom-plugins",

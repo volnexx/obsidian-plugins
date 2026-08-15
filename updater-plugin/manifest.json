@@ -1,7 +1,7 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "minAppVersion": "1.5.0",
   "description": "Одной кнопкой обновляет установленные и ставит новые плагины из общего репозитория с резервной копией и откатом.",
   "author": "volnexx",
