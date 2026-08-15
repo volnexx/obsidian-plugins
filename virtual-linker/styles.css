@@ -1,0 +1,55 @@
+/*
+
+This CSS file will be included with your plugin, and
+available in the app when your plugin is enabled.
+
+If your plugin does not need CSS, delete this file.
+
+*/
+
+/* A virtual link is marked only by its suffix icon. The matched text keeps
+   exactly the same appearance in every theme and interaction state. */
+.virtual-link,
+.virtual-link-default,
+.virtual-link-a,
+.virtual-link-a:link,
+.virtual-link-a:visited,
+.virtual-link-a:hover,
+.virtual-link-a:active,
+.virtual-link-a:focus {
+    color: inherit !important;
+    background: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    filter: none !important;
+    font: inherit !important;
+    opacity: 1 !important;
+    outline: 0 !important;
+    text-decoration: none !important;
+    text-shadow: none !important;
+}
+
+.linker-suffix-icon {
+    user-select: none;
+}
+
+.linker-settings-text-box {
+    min-width: 200px;
+    min-height: 60px;
+}
+
+
+.virtual-link-span:hover .multiple-files-references {
+    display: inline;
+}
+.virtual-link-span:hover .multiple-files-indicator {
+    display: none;
+}
+
+.multiple-files-references {
+    display: none;
+}
+
+.multiple-files-indicator {
+    display: inline;
+}

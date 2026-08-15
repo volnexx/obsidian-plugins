@@ -72,6 +72,12 @@
       "name": "VPS Sync",
       "version": "0.1.6",
       "path": "vps-sync"
+    },
+    {
+      "id": "virtual-linker",
+      "name": "Virtual Linker / Glossary",
+      "version": "1.5.3",
+      "path": "virtual-linker"
     }
   ]
 }
