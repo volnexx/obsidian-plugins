@@ -52,7 +52,10 @@ jobs:
           assert m['version']=='0.10.0'
           assert m['isDesktopOnly'] is False
           s=open('updater-plugin/main.js',encoding='utf-8').read()
-          assert 'const fs = require("fs");' not in s
+          head='\n'.join(s.splitlines()[:40])
+          assert 'require("fs")' not in head
+          assert 'require("path")' not in head
+          assert 'require("child_process")' not in head
           assert 'Platform.isDesktopApp' in s
           assert 'this.app.vault.adapter' in s
           PY
