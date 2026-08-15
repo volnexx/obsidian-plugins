@@ -4,13 +4,13 @@ const fsp = fs.promises;
 const path = require("path");
 const { spawn } = require("child_process");
 
-const UPDATE_ALL_ICON = "updater-package-update";
+const UPDATE_ALL_ICON = "updater-plugin-cycle-p";
 const UPDATE_ALL_ICON_SVG = `
-  <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l5 2.86a2 2 0 0 0 2 0l2-1.14"/>
-  <path d="m3.3 7 8.7 5 8.7-5"/>
-  <path d="M12 22V12"/>
-  <path d="M17 14v7"/>
-  <path d="m14 18 3 3 3-3"/>
+  <path d="M20 7v5h-5"/>
+  <path d="M4 17v-5h5"/>
+  <path d="M6.3 8.2A7 7 0 0 1 18.5 6.7L20 8"/>
+  <path d="M17.7 15.8A7 7 0 0 1 5.5 17.3L4 16"/>
+  <path d="M10 16V8h3a3 3 0 0 1 0 6h-3"/>
 `;
 
 const DEFAULT_SETTINGS = {
@@ -293,19 +293,38 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async githubJson(url) {
+    const sep = url.includes("?") ? "&" : "?";
+    const freshUrl = `${url}${sep}updater=${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const r = await requestUrl({
-      url, method: "GET",
-      headers: { "Accept": "application/vnd.github+json", "User-Agent": "Updater-Plugin" }
+      url: freshUrl,
+      method: "GET",
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Updater-Plugin",
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        "Pragma": "no-cache"
+      }
     });
     if (r.status < 200 || r.status >= 300) throw new Error(`GitHub API HTTP ${r.status}`);
     return r.json;
+  }
+
+  async resolveRepositoryRevision(owner, repo, branch) {
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`;
+    const commit = await this.githubJson(url);
+    const sha = String(commit?.sha || "").trim();
+    if (!/^[0-9a-f]{40}$/iu.test(sha)) {
+      throw new Error(`Не удалось определить последний commit SHA ветки ${branch}.`);
+    }
+    return sha;
   }
 
   async listRepositoryPluginFolders() {
     const [owner, repo] = String(this.settings.registryRepo || "").split("/");
     if (!owner || !repo) throw new Error("Центральный репозиторий должен быть owner/repository.");
     const branch = this.settings.registryBranch || "main";
-    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`;
+    const revision = await this.resolveRepositoryRevision(owner, repo, branch);
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(revision)}`;
     const root = await this.githubJson(url);
     if (!Array.isArray(root)) throw new Error("Не удалось получить корень репозитория.");
     const dirs = root.filter(x => x?.type === "dir" && x?.name && x.name !== ".github" && !x.name.startsWith("."));
@@ -313,12 +332,12 @@ module.exports = class UpdaterPlugin extends Plugin {
       const prefix=`${d.path.replace(/\/+$/u, "")}/`;
       try {
         const [manifestText] = await Promise.all([
-          this.rawText(this.settings.registryRepo, branch, `${prefix}manifest.json`),
-          this.rawText(this.settings.registryRepo, branch, `${prefix}main.js`)
+          this.rawText(this.settings.registryRepo, revision, `${prefix}manifest.json`),
+          this.rawText(this.settings.registryRepo, revision, `${prefix}main.js`)
         ]);
         const manifest=JSON.parse(manifestText);
         if (!manifest?.id || !manifest?.version) return null;
-        return { id:manifest.id, name:manifest.name||manifest.id, version:manifest.version, path:d.path, manifest };
+        return { id:manifest.id, name:manifest.name||manifest.id, version:manifest.version, path:d.path, manifest, sourceRef:revision };
       } catch { return null; }
     }))).filter(Boolean);
     new Notice(`Папок проверено: ${dirs.length}. Плагинов найдено: ${plugins.length}.`);
@@ -640,7 +659,11 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   sourceFor(entry) {
-    return { repo: this.settings.registryRepo, branch: this.settings.registryBranch || "main", prefix: entry.path ? `${entry.path.replace(/\/+$/u, "")}/` : "" };
+    return {
+      repo: this.settings.registryRepo,
+      branch: entry.sourceRef || this.settings.registryBranch || "main",
+      prefix: entry.path ? `${entry.path.replace(/\/+$/u, "")}/` : ""
+    };
   }
 
   async prepareUpdate(info) {
