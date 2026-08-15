@@ -1,52 +1,3 @@
-/*
-
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
-*/
-
-/* A virtual link is marked only by its suffix icon. The matched text keeps
-   exactly the same appearance in every theme and interaction state. */
-.virtual-link,
-.virtual-link-default,
-.virtual-link-a,
-.virtual-link-a:link,
-.virtual-link-a:visited,
-.virtual-link-a:hover,
-.virtual-link-a:active,
-.virtual-link-a:focus {
-    color: inherit !important;
-    background: none !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    filter: none !important;
-    font: inherit !important;
-    opacity: 1 !important;
-    outline: 0 !important;
-    text-decoration: none !important;
-    text-shadow: none !important;
-}
-
-/* User snippets and themes can use more specific selectors with !important.
-   These selectors keep every generated fragment on the surrounding text color. */
-body .markdown-source-view .virtual-link,
-body .markdown-source-view .virtual-link *,
-body .markdown-preview-view .virtual-link,
-body .markdown-preview-view .virtual-link * {
-    color: inherit !important;
-    background: none !important;
-    background-color: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    filter: none !important;
-    opacity: 1 !important;
-    outline: 0 !important;
-    text-decoration: none !important;
-    text-shadow: none !important;
-}
-
 .linker-suffix-icon {
     user-select: none;
 }
@@ -57,10 +8,10 @@ body .markdown-preview-view .virtual-link * {
 }
 
 
-.virtual-link-span:hover .multiple-files-references {
+.virtual-link-container:hover .multiple-files-references {
     display: inline;
 }
-.virtual-link-span:hover .multiple-files-indicator {
+.virtual-link-container:hover .multiple-files-indicator {
     display: none;
 }
 

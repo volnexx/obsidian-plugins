@@ -428,22 +428,6 @@ var LinkerCache = class {
 };
 
 // linker/virtualLinkDom.ts
-var preserveOriginalAppearance = (element) => {
-  const rules = [
-    ["color", "inherit"],
-    ["background", "none"],
-    ["background-color", "transparent"],
-    ["border", "0"],
-    ["box-shadow", "none"],
-    ["filter", "none"],
-    ["opacity", "1"],
-    ["outline", "0"],
-    ["text-decoration", "none"],
-    ["text-shadow", "none"]
-  ];
-  rules.forEach(([property, value]) => element.style.setProperty(property, value, "important"));
-  return element;
-};
 var VirtualMatch = class {
   constructor(id, originText, from, to, files, isAlias, isSubWord, settings) {
     this.id = id;
@@ -458,17 +442,16 @@ var VirtualMatch = class {
   getCompleteLinkElement() {
     const span = this.getLinkRootSpan();
     const firstPath = this.files.length > 0 ? this.files[0].path : "";
-    span.appendChild(this.getLinkAnchorElement(this.originText, firstPath));
+    if (!this.isSubWord || !this.settings.suppressSuffixForSubWords) {
+      const icon = this.getIconSpan(firstPath);
+      if (icon)
+        span.appendChild(icon);
+    }
     if (this.files.length > 1) {
       if (!this.isSubWord) {
         span.appendChild(this.getMultipleReferencesIndicatorSpan());
       }
       span.appendChild(this.getMultipleReferencesSpan());
-    }
-    if (!this.isSubWord || !this.settings.suppressSuffixForSubWords) {
-      const icon = this.getIconSpan();
-      if (icon)
-        span.appendChild(icon);
     }
     return span;
   }
@@ -482,12 +465,12 @@ var VirtualMatch = class {
     link.setAttribute("to", this.to.toString());
     link.setAttribute("origin-text", this.originText);
     link.classList.add("internal-link", "virtual-link-a");
-    return preserveOriginalAppearance(link);
+    return link;
   }
   getLinkRootSpan() {
     const span = document.createElement("span");
-    span.classList.add("glossary-entry", "virtual-link", "virtual-link-span");
-    return preserveOriginalAppearance(span);
+    span.classList.add("virtual-link-container");
+    return span;
   }
   getMultipleReferencesSpan(files) {
     const spanReferences = document.createElement("span");
@@ -499,7 +482,7 @@ var VirtualMatch = class {
       if (index === 0) {
         const bracket = document.createElement("span");
         bracket.textContent = this.isSubWord ? "[" : " [";
-        spanReferences.appendChild(preserveOriginalAppearance(bracket));
+        spanReferences.appendChild(bracket);
       }
       let linkText = ` ${index + 1} `;
       if (index < files.length - 1) {
@@ -511,25 +494,25 @@ var VirtualMatch = class {
       if (index == files.length - 1) {
         const bracket = document.createElement("span");
         bracket.textContent = "]";
-        spanReferences.appendChild(preserveOriginalAppearance(bracket));
+        spanReferences.appendChild(bracket);
       }
     });
-    return preserveOriginalAppearance(spanReferences);
+    return spanReferences;
   }
   getMultipleReferencesIndicatorSpan() {
     const spanIndicator = document.createElement("span");
     spanIndicator.textContent = " [...]";
     spanIndicator.classList.add("multiple-files-indicator");
-    return preserveOriginalAppearance(spanIndicator);
+    return spanIndicator;
   }
-  getIconSpan() {
+  getIconSpan(href) {
     var _a;
     const suffix = this.isAlias ? this.settings.virtualLinkAliasSuffix : this.settings.virtualLinkSuffix;
     if (((_a = suffix == null ? void 0 : suffix.length) != null ? _a : 0) > 0) {
       let icon = document.createElement("sup");
-      icon.textContent = suffix;
       icon.classList.add("linker-suffix-icon");
-      return preserveOriginalAppearance(icon);
+      icon.appendChild(this.getLinkAnchorElement(suffix, href));
+      return icon;
     }
     return null;
   }
@@ -675,22 +658,19 @@ var GlossaryLinker = class extends import_obsidian3.MarkdownRenderChild {
               matches = VirtualMatch.filterOverlapping(matches, true);
             }
             const parent = childNode.parentElement;
-            let lastTo = 0;
-            matches.forEach((match) => {
-              match.files.forEach((f) => linkedFiles.add(f));
-              const span = match.getCompleteLinkElement();
-              if (match.from > 0) {
-                parent == null ? void 0 : parent.insertBefore(document.createTextNode(text.slice(lastTo, match.from)), childNode);
-              }
-              parent == null ? void 0 : parent.insertBefore(span, childNode);
-              lastTo = match.to;
-            });
-            const textLength = text.length;
-            if (lastTo < textLength) {
-              parent == null ? void 0 : parent.insertBefore(document.createTextNode(text.slice(lastTo)), childNode);
+            matches.forEach((match) => match.files.forEach((f) => linkedFiles.add(f)));
+            let insertedDecorations = 0;
+            if (parent) {
+              matches.slice().reverse().forEach((match) => {
+                const span = match.getCompleteLinkElement();
+                if (!span.hasChildNodes())
+                  return;
+                const followingText = childNode.splitText(match.to);
+                parent.insertBefore(span, followingText);
+                insertedDecorations += 1;
+              });
             }
-            parent == null ? void 0 : parent.removeChild(childNode);
-            childNodeIndex += 1;
+            childNodeIndex += insertedDecorations * 2;
           }
         }
       }
@@ -1424,9 +1404,13 @@ var AutoLinkerPlugin = class {
           }
         }
         if (!cursorNearby && !needImeFix && !(excludeLine && additionIsInCurrentLine)) {
-          builder.add(from2, to2, import_view.Decoration.replace({
-            widget: new VirtualLinkWidget(addition)
-          }));
+          const widget = addition.getCompleteLinkElement();
+          if (widget.hasChildNodes()) {
+            builder.add(to2, to2, import_view.Decoration.widget({
+              widget: new VirtualLinkWidget(addition),
+              side: 1
+            }));
+          }
         }
       });
     }
