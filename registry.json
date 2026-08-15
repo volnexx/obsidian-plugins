@@ -11,6 +11,7 @@
     {"id":"parsing","name":"Parsing","version":"0.14.0","path":"parsing"},
     {"id":"omnisearch","name":"Search","version":"1.30.2","path":"search"},
     {"id":"interactive-formulas","name":"Interactive Formulas","version":"0.1.8","path":"interactive-formulas"},
-    {"id":"rick-ui","name":"Rick UI","version":"0.3.1","path":"rick-ui"}
+    {"id":"rick-ui","name":"Rick UI","version":"0.3.1","path":"rick-ui"},
+    {"id":"vps-sync","name":"VPS Sync","version":"0.1.6","path":"vps-sync"}
   ]
 }

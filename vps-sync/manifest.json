@@ -1,0 +1,9 @@
+{
+  "id": "vps-sync",
+  "name": "VPS Sync",
+  "version": "0.1.6",
+  "minAppVersion": "1.6.0",
+  "description": "Надёжная зашифрованная синхронизация всего хранилища через собственный VPS.",
+  "author": "mcmarkus",
+  "isDesktopOnly": false
+}
