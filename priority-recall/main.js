@@ -145,10 +145,16 @@ var FENCE_PATTERN = /^\s*(`{3,}|~{3,})/;
 var BOLD_DEFINITION_PATTERN = /\*\*([^*\r\n]+?)\*\*/gu;
 var DEFINITION_DELIMITER = "\u2014";
 var HEADING_PATTERN = /^\s{0,3}#{1,6}[ \t]+(.+?)[ \t]*$/u;
+function parseBoldContentsFromLine(line) {
+  const contents = [...line.matchAll(BOLD_DEFINITION_PATTERN)].map((match) => (match[1] ?? "").trim()).filter((content) => content.length > 0);
+  if (contents.length > 0) return contents;
+  const unmatchedOpening = line.match(/^\s*(?:(?:[-+*]|\d+[.)])[ \t]+)?\*\*([^*\r\n]+?)[ \t]*$/u);
+  const content = (unmatchedOpening?.[1] ?? "").trim();
+  return content.length > 0 ? [content] : [];
+}
 function parseDefinitionsFromLine(line) {
   const definitions = [];
-  for (const match of line.matchAll(BOLD_DEFINITION_PATTERN)) {
-    const content = match[1] ?? "";
+  for (const content of parseBoldContentsFromLine(line)) {
     const delimiter = content.indexOf(DEFINITION_DELIMITER);
     if (delimiter <= 0) continue;
     const term = content.slice(0, delimiter).trim();
@@ -160,9 +166,7 @@ function parseDefinitionsFromLine(line) {
 }
 function parseListTermsFromLine(line) {
   const terms = [];
-  for (const match of line.matchAll(BOLD_DEFINITION_PATTERN)) {
-    const content = (match[1] ?? "").trim();
-    if (content.length === 0) continue;
+  for (const content of parseBoldContentsFromLine(line)) {
     const delimiter = content.indexOf(DEFINITION_DELIMITER);
     if (delimiter === -1) {
       terms.push(content);
@@ -1646,7 +1650,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }));
     const rawVersion = raw && typeof raw === "object" ? raw.version : null;
     const rawStates = raw && typeof raw === "object" ? raw.fileStates : null;
-    if ((rawVersion === 9 || rawVersion === 10 || rawVersion === 11) && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
+    if (rawVersion === 12 && rawStates && typeof rawStates === "object" && !Array.isArray(rawStates)) {
       for (const [path, state] of Object.entries(rawStates)) {
         if (isFileScanState(state)) this.fileStates[path] = state;
       }
@@ -1665,7 +1669,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
       );
     }
     const rawGrowth = raw && typeof raw === "object" ? raw.growthCardStates : null;
-    if ((rawVersion === 10 || rawVersion === 11) && Array.isArray(rawGrowth)) {
+    if ((rawVersion === 10 || rawVersion === 11 || rawVersion === 12) && Array.isArray(rawGrowth)) {
       const cardIds = new Set(this.cards.map((card) => card.id));
       for (const entry of rawGrowth) {
         if (!entry || typeof entry !== "object" || typeof entry.cardId !== "string" || !cardIds.has(entry.cardId) || !isGrowthCardState(entry)) continue;
@@ -1950,7 +1954,7 @@ var TermIntervalReviewPlugin = class extends import_obsidian.Plugin {
     }
     this.savePromise = this.savePromise.then(async () => {
       const data = {
-        version: 11,
+        version: 12,
         settings: this.settings,
         cards: this.cards,
         fileStates: this.fileStates,
