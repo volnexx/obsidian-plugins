@@ -20,6 +20,12 @@
       "path": "priority-recall"
     },
     {
+      "id": "jump-to-recall",
+      "name": "Переход к повторению",
+      "version": "1.0.0",
+      "path": "jump-to-recall"
+    },
+    {
       "id": "memory-monitor-ru",
       "name": "Монитор ресурсов",
       "version": "1.1.0",

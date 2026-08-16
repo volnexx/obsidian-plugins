@@ -1,0 +1,9 @@
+{
+  "id": "jump-to-recall",
+  "name": "Переход к повторению",
+  "version": "1.0.0",
+  "minAppVersion": "1.8.0",
+  "description": "Превращает определения и перечни «Повторения терминов» в цели Jump to Link.",
+  "author": "папочка",
+  "isDesktopOnly": false
+}
