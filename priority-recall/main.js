@@ -271,17 +271,6 @@ function parseDefinitionLists(content) {
   }
   return parsed;
 }
-var russianTermCollator = new Intl.Collator("ru", {
-  sensitivity: "accent",
-  numeric: true
-});
-function sortListTermsAlphabetically(terms) {
-  return [...terms].sort((left, right) => russianTermCollator.compare(
-    formatTermForDisplay(left).trim(),
-    formatTermForDisplay(right).trim()
-  ));
-}
-
 // src/scheduler.ts
 var SECOND = 1e3;
 var MINUTE = 60 * SECOND;
@@ -396,7 +385,7 @@ function stageIntervalLabel(stage) {
 }
 function getGrowthUnits(card) {
   if (getCardKind(card) === "list") {
-    return sortListTermsAlphabetically(card.listTerms ?? []).map((item) => formatTermForDisplay(item).trim()).filter((item) => item.length > 0);
+    return (card.listTerms ?? []).map((item) => formatTermForDisplay(item).trim()).filter((item) => item.length > 0);
   }
   return formatCardTextForDisplay(card.definition).trim().split(/\s+/u).filter((word) => word.length > 0);
 }
@@ -1168,7 +1157,7 @@ var ReviewView = class extends import_obsidian.ItemView {
     if (getCardKind(card) === "list") {
       container.addClass("tir-list-answer");
       const list = container.createDiv({ cls: "tir-definition-list", attr: { role: "list" } });
-      const items = unitLimit === null ? sortListTermsAlphabetically(card.listTerms ?? []).map((item) => formatTermForDisplay(item)) : getGrowthFragment(card, unitLimit);
+      const items = unitLimit === null ? (card.listTerms ?? []).map((item) => formatTermForDisplay(item)) : getGrowthFragment(card, unitLimit);
       for (const [index, item] of items.entries()) {
         const row = list.createDiv({
           cls: "tir-definition-list-item markdown-rendered",
