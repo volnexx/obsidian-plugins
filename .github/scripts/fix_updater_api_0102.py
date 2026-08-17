@@ -32,7 +32,7 @@ raw_replacement = r'''  decodeBase64Utf8(value) {
   }
 
   async githubJson(url) {'''
-text, count = raw_pattern.subn(raw_replacement, text, count=1)
+text, count = raw_pattern.subn(lambda _: raw_replacement, text, count=1)
 if count != 1:
     raise SystemExit(f'rawText block replacements: {count}')
 
@@ -71,7 +71,7 @@ list_replacement = r'''  async listRepositoryPluginFolders() {
   }
 
   async readInstalledPlugins() {'''
-text, count = list_pattern.subn(list_replacement, text, count=1)
+text, count = list_pattern.subn(lambda _: list_replacement, text, count=1)
 if count != 1:
     raise SystemExit(f'listRepositoryPluginFolders replacements: {count}')
 
@@ -85,7 +85,7 @@ find_replacement = r'''  async findUpdates(plugins) {
   }
 
   async checkOnly() {'''
-text, count = find_pattern.subn(find_replacement, text, count=1)
+text, count = find_pattern.subn(lambda _: find_replacement, text, count=1)
 if count != 1:
     raise SystemExit(f'findUpdates replacements: {count}')
 
