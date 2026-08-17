@@ -1,0 +1,68 @@
+name: Fix Updater API 0.10.2 temp
+
+on:
+  push:
+    branches:
+      - fix-updater-github-api-0.10.2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-updater-github-api-0.10.2
+          fetch-depth: 0
+
+      - name: Apply API migration
+        run: python .github/scripts/fix_updater_api_0102.py
+
+      - name: Validate Updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check updater-plugin/main.js
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('updater-plugin/manifest.json').read_text())
+          r = json.loads(Path('registry.json').read_text())
+          assert m['version'] == '0.10.2'
+          entry = next(x for x in r['plugins'] if x['id'] == 'updater-plugin')
+          assert entry['version'] == '0.10.2'
+          text = Path('updater-plugin/main.js').read_text()
+          assert 'raw.githubusercontent.com' not in text
+          assert 'registry.json' in text
+          assert 'decodeBase64Utf8' in text
+          PY
+          git diff --check
+
+      - name: Build bootstrap zip
+        shell: bash
+        run: |
+          rm -f updater-plugin-0.10.2.zip
+          zip -j updater-plugin-0.10.2.zip updater-plugin/main.js updater-plugin/manifest.json updater-plugin/styles.css
+
+      - name: Upload bootstrap zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-plugin-0.10.2
+          path: updater-plugin-0.10.2.zip
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- updater-plugin/main.js updater-plugin/manifest.json registry.json
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'Use GitHub API in Updater 0.10.2'
+          git push origin HEAD:fix-updater-github-api-0.10.2
