@@ -1,7 +1,7 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "minAppVersion": "1.5.0",
   "description": "Обновляет плагины из общего репозитория на ПК, iPhone и Android; на мобильных устройствах работает через Vault.adapter и делает резервную копию внутри служебной папки Updater.",
   "author": "volnexx",
