@@ -1,0 +1,63 @@
+name: Sync Priority Recall temp
+
+on:
+  push:
+    branches:
+      - sync-priority-recall-0.38.0
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync-priority-recall-0.38.0
+          fetch-depth: 0
+
+      - name: Download Priority Recall 0.38.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p priority-recall
+          base='https://raw.githubusercontent.com/volnexx/Priority-Recall/main'
+          curl --fail --location --silent --show-error "$base/main.js" -o priority-recall/main.js
+          curl --fail --location --silent --show-error "$base/manifest.json" -o priority-recall/manifest.json
+          curl --fail --location --silent --show-error "$base/styles.css" -o priority-recall/styles.css
+          test "$(python -c 'import json; print(json.load(open("priority-recall/manifest.json"))["version"])')" = '0.38.0'
+
+      - name: Update central registry
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('registry.json')
+          data = json.loads(p.read_text())
+          found = False
+          for plugin in data.get('plugins', []):
+              if plugin.get('id') == 'term-interval-review':
+                  plugin['version'] = '0.38.0'
+                  plugin['path'] = 'priority-recall'
+                  found = True
+          if not found:
+              raise SystemExit('term-interval-review is missing from registry.json')
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Commit synchronized plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- priority-recall/main.js priority-recall/manifest.json priority-recall/styles.css registry.json
+          if git diff --cached --quiet; then
+            echo 'Nothing to synchronize.'
+            exit 0
+          fi
+          git commit -m 'Sync Priority Recall 0.38.0'
+          git push origin HEAD:sync-priority-recall-0.38.0
