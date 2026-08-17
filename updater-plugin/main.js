@@ -408,19 +408,29 @@ module.exports = class UpdaterPlugin extends Plugin {
     throw lastError || new Error(`${label}: запрос не выполнен.`);
   }
 
+  decodeBase64Utf8(value) {
+    const compact = String(value || "").replace(/\s+/gu, "");
+    const binary = globalThis.atob(compact);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
   async rawText(repo, ref, file) {
-    const r = await this.requestWithRetry(() => {
-      const cacheBust = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      return {
-        url: `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(ref)}/${file}?updater=${cacheBust}`,
-        method: "GET",
-        headers: {
-          "Cache-Control": "no-cache, no-store, max-age=0",
-          "Pragma": "no-cache"
-        }
-      };
-    }, `${repo}/${file}`);
-    return r.text;
+    const [owner, repository] = String(repo || "").split("/");
+    if (!owner || !repository) throw new Error("Репозиторий должен быть owner/repository.");
+    const encodedPath = String(file || "")
+      .split("/")
+      .filter(Boolean)
+      .map(part => encodeURIComponent(part))
+      .join("/");
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+    const data = await this.githubJson(url);
+    if (!data || data.type !== "file") throw new Error(`${repo}/${file}: GitHub API не вернул файл.`);
+    if (data.encoding !== "base64" || typeof data.content !== "string") {
+      throw new Error(`${repo}/${file}: неподдерживаемый формат содержимого GitHub API.`);
+    }
+    return this.decodeBase64Utf8(data.content);
   }
 
   async githubJson(url) {
@@ -454,35 +464,31 @@ module.exports = class UpdaterPlugin extends Plugin {
     if (!owner || !repo) throw new Error("Центральный репозиторий должен быть owner/repository.");
     const branch = this.settings.registryBranch || "main";
     const revision = await this.resolveRepositoryRevision(owner, repo, branch);
-    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(revision)}`;
-    const root = await this.githubJson(url);
-    if (!Array.isArray(root)) throw new Error("Не удалось получить корень репозитория.");
-
-    const dirs = root.filter(x => x?.type === "dir" && x?.name && x.name !== ".github" && !x.name.startsWith("."));
-    const plugins = [];
-    for (const d of dirs) {
-      const prefix = `${String(d.path).replace(/\/+$/u, "")}/`;
-      try {
-        const [manifestText] = await Promise.all([
-          this.rawText(this.settings.registryRepo, revision, `${prefix}manifest.json`),
-          this.rawText(this.settings.registryRepo, revision, `${prefix}main.js`)
-        ]);
-        const manifest = JSON.parse(manifestText);
-        if (!manifest?.id || !manifest?.version) continue;
-        plugins.push({
-          id: manifest.id,
-          name: manifest.name || manifest.id,
-          version: manifest.version,
-          path: d.path,
-          manifest,
-          sourceRef: revision
-        });
-      } catch (error) {
-        console.warn(`[Updater Plugin] Пропущена папка ${d.path}:`, error);
-      }
+    const registryText = await this.rawText(this.settings.registryRepo, revision, "registry.json");
+    let registry;
+    try {
+      registry = JSON.parse(registryText);
+    } catch {
+      throw new Error("registry.json содержит некорректный JSON.");
     }
+    if (!registry || !Array.isArray(registry.plugins)) throw new Error("registry.json не содержит список plugins.");
 
-    new Notice(`Папок проверено: ${dirs.length}. Плагинов найдено: ${plugins.length}.`);
+    const plugins = registry.plugins
+      .filter(entry => entry && entry.id && entry.version && entry.path)
+      .map(entry => ({
+        id: String(entry.id),
+        name: String(entry.name || entry.id),
+        version: String(entry.version),
+        path: String(entry.path),
+        manifest: {
+          id: String(entry.id),
+          name: String(entry.name || entry.id),
+          version: String(entry.version)
+        },
+        sourceRef: revision
+      }));
+
+    new Notice(`Реестр загружен: ${plugins.length} плагинов.`);
     return plugins;
   }
 
@@ -641,13 +647,11 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   async findUpdates(plugins) {
-    const checked = await Promise.all(plugins.map(async p => {
-      const cmp = compareVersions(p.entry.version, p.local.version);
-      if (cmp > 0) return { ...p, updateReason: "version" };
-      if (cmp < 0) return null;
-      return await this.pluginFilesDiffer(p) ? { ...p, updateReason: "files" } : null;
-    }));
-    return checked.filter(Boolean);
+    return plugins
+      .map(p => compareVersions(p.entry.version, p.local.version) > 0
+        ? { ...p, updateReason: "version" }
+        : null)
+      .filter(Boolean);
   }
 
   async checkOnly() {
