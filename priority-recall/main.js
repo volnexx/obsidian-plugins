@@ -2314,40 +2314,60 @@ var ReviewView = class extends import_obsidian.ItemView {
     });
   }
   async submit(cardId, correct) {
-    const result = await this.plugin.reviewCard(cardId, correct);
-    if (!result) {
-      await this.renderQuestion();
-      return;
-    }
-    const updated = result.card;
-    if (result.growthFeedback) {
-      this.cardId = cardId;
-      this.waitingFor = { cardId, dueAt: updated.dueAt };
-      await this.renderGrowthWaiting(updated, correct, result.growthFeedback);
-      return;
-    }
-    const action = chooseReviewCompletionAction(
-      this.plugin.cards,
-      cardId,
-      !correct,
-      this.plugin.urgentSourcePaths,
-      this.plugin.getPriorityPinnedCardIds(),
-      Date.now(),
-      this.plugin.settings
-    );
-    if (action.type === "open") {
+    if (this.transitionPending || cardId !== this.cardId) return;
+    this.transitionPending = true;
+    try {
+      const result = await this.plugin.reviewCard(cardId, correct);
+      if (!result) {
+        await this.renderQuestion();
+        return;
+      }
+      const updated = result.card;
+      if (result.growthFeedback) {
+        const action = chooseReviewCompletionAction(
+          this.plugin.cards,
+          cardId,
+          true,
+          this.plugin.urgentSourcePaths,
+          this.plugin.getPriorityPinnedCardIds(),
+          Date.now(),
+          this.plugin.settings
+        );
+        if (action.type === "open") {
+          this.cardId = action.cardId;
+          await this.renderQuestion();
+          return;
+        }
+        this.cardId = cardId;
+        this.waitingFor = { cardId, dueAt: updated.dueAt };
+        await this.renderGrowthWaiting(updated, correct, result.growthFeedback);
+        return;
+      }
+      const action = chooseReviewCompletionAction(
+        this.plugin.cards,
+        cardId,
+        !correct,
+        this.plugin.urgentSourcePaths,
+        this.plugin.getPriorityPinnedCardIds(),
+        Date.now(),
+        this.plugin.settings
+      );
+      if (action.type === "open") {
+        this.cardId = action.cardId;
+        await this.renderQuestion();
+        return;
+      }
+      if (action.type === "close") {
+        this.waitingFor = null;
+        this.leaf.detach();
+        return;
+      }
       this.cardId = action.cardId;
-      await this.renderQuestion();
-      return;
+      this.waitingFor = { cardId: action.cardId, dueAt: action.dueAt };
+      this.renderWaiting(updated, correct);
+    } finally {
+      this.transitionPending = false;
     }
-    if (action.type === "close") {
-      this.waitingFor = null;
-      this.leaf.detach();
-      return;
-    }
-    this.cardId = action.cardId;
-    this.waitingFor = { cardId: action.cardId, dueAt: action.dueAt };
-    this.renderWaiting(updated, correct);
   }
   async renderDefinition(card, container, unitLimit = null, emphasizedUnitIndex = null) {
     if (getCardKind(card) === "list") {
