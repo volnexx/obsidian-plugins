@@ -18,15 +18,16 @@ jobs:
           ref: sync-priority-recall-0.38.0
           fetch-depth: 0
 
-      - name: Download Priority Recall 0.38.0
+      - name: Copy Priority Recall 0.38.0
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/priority-recall-source
+          git clone --depth 1 --branch main https://github.com/volnexx/Priority-Recall.git /tmp/priority-recall-source
           mkdir -p priority-recall
-          base='https://raw.githubusercontent.com/volnexx/Priority-Recall/main'
-          curl --fail --location --silent --show-error "$base/main.js" -o priority-recall/main.js
-          curl --fail --location --silent --show-error "$base/manifest.json" -o priority-recall/manifest.json
-          curl --fail --location --silent --show-error "$base/styles.css" -o priority-recall/styles.css
+          cp /tmp/priority-recall-source/main.js priority-recall/main.js
+          cp /tmp/priority-recall-source/manifest.json priority-recall/manifest.json
+          cp /tmp/priority-recall-source/styles.css priority-recall/styles.css
           test "$(python -c 'import json; print(json.load(open("priority-recall/manifest.json"))["version"])')" = '0.38.0'
 
       - name: Update central registry
