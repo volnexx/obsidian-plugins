@@ -1,0 +1,72 @@
+name: Sync Experience plugin
+
+on:
+  push:
+    branches:
+      - centralize-plugins
+    paths:
+      - ".github/workflows/sync-experience.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout central plugin repository
+        uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+
+      - name: Download current Experience build
+        run: |
+          set -euo pipefail
+          mkdir -p experience
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/main.js -o experience/main.js
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/manifest.json -o experience/manifest.json
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/styles.css -o experience/styles.css
+
+      - name: Synchronize registry version
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("experience/manifest.json").read_text(encoding="utf-8"))
+          registry_path = Path("registry.json")
+          registry = json.loads(registry_path.read_text(encoding="utf-8"))
+
+          for plugin in registry["plugins"]:
+              if plugin.get("id") == "experience":
+                  plugin["name"] = manifest.get("name", plugin.get("name", "Опыт"))
+                  plugin["version"] = manifest["version"]
+                  plugin["path"] = "experience"
+                  break
+          else:
+              registry["plugins"].append({
+                  "id": "experience",
+                  "name": manifest.get("name", "Опыт"),
+                  "version": manifest["version"],
+                  "path": "experience",
+              })
+
+          registry_path.write_text(
+              json.dumps(registry, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit synchronized files
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- experience registry.json; then
+            echo "Experience is already synchronized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add experience registry.json
+          git commit -m "Sync Experience plugin from source repository"
+          git push origin HEAD:centralize-plugins
