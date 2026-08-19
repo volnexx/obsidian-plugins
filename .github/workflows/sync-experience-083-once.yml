@@ -1,0 +1,48 @@
+name: Sync Experience 0.8.3
+
+on:
+  push:
+    branches: [centralize-plugins]
+    paths:
+      - ".github/workflows/sync-experience-083-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+      - name: Sync Experience files and registry
+        run: |
+          set -euo pipefail
+          mkdir -p experience
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/main.js -o experience/main.js
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/manifest.json -o experience/manifest.json
+          curl -fsSL https://raw.githubusercontent.com/volnexx/experience/main/styles.css -o experience/styles.css
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('registry.json')
+          data = json.loads(p.read_text())
+          found = False
+          for plugin in data.get('plugins', []):
+              if plugin.get('id') == 'experience':
+                  plugin['version'] = '0.8.3'
+                  found = True
+                  break
+          if not found:
+              raise SystemExit('experience registry entry not found')
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+          PY
+      - name: Commit central copy
+        run: |
+          rm .github/workflows/sync-experience-083-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Sync Experience 0.8.3"
+          git push origin centralize-plugins
