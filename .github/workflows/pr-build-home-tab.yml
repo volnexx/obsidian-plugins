@@ -38,10 +38,10 @@ jobs:
           p = root / 'src/settings.ts'
           s = p.read_text()
           for old, new in {
-              'logoType: "default",': 'logoType: "none",',
-              'wordmark: "Obsidian",': 'wordmark: "",',
-              'showbookmarkedFiles: app.internalPlugins.getPluginById("bookmarks") ? true : false,': 'showbookmarkedFiles: true,',
-              'omnisearch: false,': 'omnisearch: true,',
+              "logoType: 'default',": "logoType: 'none',",
+              "wordmark: 'Obsidian',": "wordmark: '',",
+              "showbookmarkedFiles: app.internalPlugins.getPluginById('bookmarks') ? true : false,": "showbookmarkedFiles: true,",
+              "omnisearch: false,": "omnisearch: true,",
           }.items():
               if old not in s:
                   raise SystemExit(f'Missing defaults target: {old}')
