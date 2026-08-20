@@ -78,6 +78,27 @@ jobs:
           npm install --no-audit --no-fund
           ln -sfn ../src node_modules/src
           node esbuild.config.mjs production
+          node --check main.js
+
+      - name: Package plugin ZIP
+        shell: bash
+        run: |
+          rm -rf /tmp/home-tab-package /tmp/Home-tab-1.2.4.zip
+          mkdir -p /tmp/home-tab-package
+          cp /tmp/home-tab/main.js /tmp/home-tab-package/main.js
+          cp /tmp/home-tab/manifest.json /tmp/home-tab-package/manifest.json
+          cp /tmp/home-tab/src/styles.css /tmp/home-tab-package/styles.css
+          cp /tmp/home-tab/LICENSE /tmp/home-tab-package/LICENSE
+          cd /tmp/home-tab-package
+          zip -r /tmp/Home-tab-1.2.4.zip .
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Home-tab-1.2.4
+          path: /tmp/Home-tab-1.2.4.zip
+          if-no-files-found: error
+          compression-level: 0
 
       - name: Publish to central registry branch
         shell: bash
@@ -115,5 +136,9 @@ jobs:
 
           rm -f .github/workflows/build-home-tab-custom.yml
           git add -A home-tab registry.json .github/workflows/build-home-tab-custom.yml
-          git commit -m 'Add custom Home tab 1.2.4 with GPT launcher'
-          git push origin centralize-plugins
+          if ! git diff --cached --quiet; then
+            git commit -m 'Add custom Home tab 1.2.4 with GPT launcher'
+            git push origin centralize-plugins
+          else
+            echo 'Central registry is already up to date.'
+          fi
