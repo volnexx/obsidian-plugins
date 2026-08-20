@@ -90,6 +90,12 @@
       "name": "Home tab",
       "version": "1.2.5",
       "path": "home-tab"
+    },
+    {
+      "id": "gpt-obsidian",
+      "name": "GPT Obsidian",
+      "version": "0.1.0",
+      "path": "gpt-obsidian"
     }
   ]
 }
