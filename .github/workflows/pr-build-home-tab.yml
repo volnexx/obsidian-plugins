@@ -1,0 +1,118 @@
+name: Build custom Home tab from PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-home-tab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone upstream
+        run: git clone --depth 1 --branch 1.2.2 https://github.com/olrenso/obsidian-home-tab.git /tmp/home-tab
+
+      - name: Patch source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('/tmp/home-tab')
+
+          p = root / 'src/settings.ts'
+          s = p.read_text()
+          for old, new in {
+              'logoType: "default",': 'logoType: "none",',
+              'wordmark: "Obsidian",': 'wordmark: "",',
+              'showbookmarkedFiles: app.internalPlugins.getPluginById("bookmarks") ? true : false,': 'showbookmarkedFiles: true,',
+              'omnisearch: false,': 'omnisearch: true,',
+          }.items():
+              if old not in s:
+                  raise SystemExit(f'Missing defaults target: {old}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = root / 'src/homeTabSearchbar.ts'
+          s = p.read_text()
+          old = '''        this.onLoad ? this.onLoad() : null;\n    }\n\n    public updateActiveSuggester'''
+          new = '''        this.onLoad ? this.onLoad() : null;\n    }\n\n    public async openChatGPT(): Promise<void> {\n        try {\n            const leaf = this.app.workspace.getLeaf('tab');\n            await leaf.setViewState({\n                type: 'webviewer',\n                active: true,\n                state: { url: 'https://chatgpt.com' },\n            });\n            await this.app.workspace.revealLeaf(leaf);\n        } catch (error) {\n            console.error('[Home tab] Failed to open ChatGPT in Web viewer:', error);\n            new Notice('Не удалось открыть ChatGPT во встроенном Web viewer.');\n        }\n    }\n\n    public updateActiveSuggester'''
+          if old not in s:
+              raise SystemExit('Missing HomeTabSearchBar insertion point')
+          p.write_text(s.replace(old, new, 1))
+
+          p = root / 'src/ui/searchBar.svelte'
+          s = p.read_text()
+          old = '''    function handleKeydown(e: KeyboardEvent): void{\n        // If the input field is empty and a filter is active remove it'''
+          new = '''    function handleKeydown(e: KeyboardEvent): void{\n        if(e.key === 'Enter' && inputValue.trim().toLowerCase() === 'gpt'){\n            e.preventDefault()\n            e.stopPropagation()\n            inputValue = ''\n            void HomeTabSearchBar.openChatGPT()\n            return\n        }\n\n        // If the input field is empty and a filter is active remove it'''
+          if old not in s:
+              raise SystemExit('Missing searchBar insertion point')
+          p.write_text(s.replace(old, new, 1))
+
+          p = root / 'manifest.json'
+          m = json.loads(p.read_text())
+          m['version'] = '1.2.4'
+          m['minAppVersion'] = '1.8.0'
+          m['description'] = 'A browser-like search tab for your local files. Custom build: type gpt and press Enter to open ChatGPT in a new Web viewer tab.'
+          p.write_text(json.dumps(m, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Build
+        working-directory: /tmp/home-tab
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Publish to central registry branch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin centralize-plugins
+          git checkout -B centralize-plugins origin/centralize-plugins
+
+          mkdir -p home-tab
+          cp /tmp/home-tab/main.js home-tab/main.js
+          cp /tmp/home-tab/manifest.json home-tab/manifest.json
+          cp /tmp/home-tab/src/styles.css home-tab/styles.css
+          cp /tmp/home-tab/LICENSE home-tab/LICENSE
+          cat > home-tab/README.md <<'EOF'
+          # Home tab — volnexx custom build
+
+          Based on olrenso/obsidian-home-tab 1.2.2 (MIT).
+
+          Type `gpt` in the Home tab search field and press Enter to open ChatGPT in a new built-in Obsidian Web viewer tab.
+
+          User-facing defaults are based on the active volnexx Home tab configuration captured on 2026-08-21. Runtime recent-file and bookmark stores remain runtime state and are not baked into defaults.
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path('registry.json')
+          r = json.loads(p.read_text())
+          plugins = r.setdefault('plugins', [])
+          plugins[:] = [x for x in plugins if x.get('id') != 'home-tab']
+          plugins.append({'id':'home-tab','name':'Home tab','version':'1.2.4','path':'home-tab'})
+          p.write_text(json.dumps(r, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+          rm -f .github/workflows/build-home-tab-custom.yml
+          git add -A home-tab registry.json .github/workflows/build-home-tab-custom.yml
+          git commit -m 'Add custom Home tab 1.2.4 with GPT launcher'
+          git push origin centralize-plugins
