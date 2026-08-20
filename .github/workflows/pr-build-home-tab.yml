@@ -76,7 +76,7 @@ jobs:
         working-directory: /tmp/home-tab
         run: |
           npm install --no-audit --no-fund
-          node esbuild.config.mjs production
+          NODE_PATH=. node esbuild.config.mjs production
 
       - name: Publish to central registry branch
         shell: bash
