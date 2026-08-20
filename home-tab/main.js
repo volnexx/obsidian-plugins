@@ -4704,6 +4704,9 @@ var Suggester = class {
       this.ISuggester.scrollSelectedItemIntoView();
     });
     scope.register([], "Enter", (e) => {
+      var _a, _b;
+      if ((_b = (_a = this.ISuggester).handleEnter) == null ? void 0 : _b.call(_a, e))
+        return;
       e.preventDefault();
       this.ISuggester.useSelectedItem(this.getSelectedItem());
     });
@@ -8706,6 +8709,15 @@ var OmnisearchSuggester = class extends TextInputSuggester {
       this.useSelectedItem(this.suggester.getSelectedItem(), true);
     });
   }
+  handleEnter(e) {
+    if (this.inputEl.value.trim().toLowerCase() !== "gpt")
+      return false;
+    e.preventDefault();
+    e.stopPropagation();
+    this.setInput("");
+    void this.searchBar.openChatGPT();
+    return true;
+  }
   updateSearchBarContainerEl(isActive) {
     var _a;
     (_a = this.inputEl.parentElement) == null ? void 0 : _a.toggleClass("is-active", isActive);
@@ -9073,7 +9085,7 @@ var HomeTabSearchBar = class {
       await leaf.setViewState({
         type: "webviewer",
         active: true,
-        state: { url: "https://chatgpt.com" }
+        state: { url: "https://chatgpt.com", navigate: true }
       });
       await this.app.workspace.revealLeaf(leaf);
     } catch (error) {
