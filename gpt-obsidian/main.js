@@ -1,8 +1,11 @@
-const { Plugin } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting } = require("obsidian");
 
 const CHATGPT_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 const ACTIVATION_PROBE_DELAYS = [0, 120, 400, 900];
 const PROMPT_FOCUS_DELAYS = [30, 160];
+const DEFAULT_SETTINGS = {
+  textColorMode: "theme"
+};
 
 const CODE_TO_KEY = {
   Backquote: "`",
@@ -122,12 +125,7 @@ function isMacPlatform() {
 function hotkeyMatchesInput(hotkey, input) {
   if (!hotkey || !hotkey.key) return false;
 
-  const expected = {
-    ctrl: false,
-    meta: false,
-    alt: false,
-    shift: false
-  };
+  const expected = { ctrl: false, meta: false, alt: false, shift: false };
 
   for (const rawModifier of hotkey.modifiers || []) {
     const modifier = String(rawModifier).toLowerCase();
@@ -159,15 +157,7 @@ function isPotentialObsidianShortcut(input) {
 
   const key = normalizeKey(input.key);
   if (/^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return true;
-  return [
-    "escape",
-    "insert",
-    "delete",
-    "home",
-    "end",
-    "pageup",
-    "pagedown"
-  ].includes(key);
+  return ["escape", "insert", "delete", "home", "end", "pageup", "pagedown"].includes(key);
 }
 
 function isChatGptUrl(value) {
@@ -181,13 +171,110 @@ function isChatGptUrl(value) {
   }
 }
 
+function sanitizeCssColor(value) {
+  const color = String(value || "").trim();
+  if (!color) return "#ffffff";
+
+  try {
+    if (typeof CSS === "undefined" || CSS.supports("color", color)) {
+      return color;
+    }
+  } catch (_) {}
+
+  return "#ffffff";
+}
+
+function buildTextColorScript(color) {
+  const safeColor = sanitizeCssColor(color);
+  const css = `
+:root {
+  --gpt-obsidian-text-color: ${safeColor};
+  --text-primary: ${safeColor} !important;
+  --text-secondary: ${safeColor} !important;
+  --text-tertiary: ${safeColor} !important;
+  --text-quaternary: ${safeColor} !important;
+  --text-placeholder: ${safeColor} !important;
+}
+
+body :where(
+  div, p, span, a, button, label, textarea, input,
+  [contenteditable="true"], [role="button"], [role="menuitem"],
+  [role="option"], [role="tab"], h1, h2, h3, h4, h5, h6,
+  li, dt, dd, th, td, blockquote, figcaption, small, strong, em
+):not(pre):not(pre *):not(code):not(code *) {
+  color: var(--gpt-obsidian-text-color) !important;
+}
+
+#prompt-textarea,
+[data-testid="prompt-textarea"],
+textarea,
+input {
+  color: var(--gpt-obsidian-text-color) !important;
+  caret-color: var(--gpt-obsidian-text-color) !important;
+}
+
+#prompt-textarea::placeholder,
+[data-testid="prompt-textarea"]::placeholder,
+textarea::placeholder,
+input::placeholder,
+[data-placeholder]::before {
+  color: var(--gpt-obsidian-text-color) !important;
+  opacity: 0.72 !important;
+}
+`;
+
+  return `(() => {
+    const styleId = "gpt-obsidian-text-color";
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = ${JSON.stringify(css)};
+    return true;
+  })()`;
+}
+
+class GptObsidianSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Цвет текста ChatGPT")
+      .setDesc("Выберите белый цвет или основной цвет текста текущей темы Obsidian.")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("white", "Белый")
+          .addOption("theme", "Цвет текста темы Obsidian")
+          .setValue(this.plugin.settings.textColorMode)
+          .onChange(async (value) => {
+            this.plugin.settings.textColorMode = value === "white" ? "white" : "theme";
+            await this.plugin.saveSettings();
+            await this.plugin.applyTextColorToAllChatGptWebviews();
+          });
+      });
+  }
+}
+
 class GptObsidianPlugin extends Plugin {
   async onload() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     this.activationSerial = 0;
     this.boundWebviews = new Map();
     this.guestBindings = new Map();
     this.remote = null;
     this.warnedRemote = false;
+    this.themeRefreshTimer = null;
+    this.themeObserver = null;
+
+    this.addSettingTab(new GptObsidianSettingTab(this.app, this));
 
     try {
       this.remote = require("@electron/remote");
@@ -196,18 +283,33 @@ class GptObsidianPlugin extends Plugin {
     }
 
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => {
-        this.handleActivation();
-      })
+      this.app.workspace.on("active-leaf-change", () => this.handleActivation())
     );
+
+    this.registerEvent(
+      this.app.workspace.on("css-change", () => this.scheduleThemeColorRefresh())
+    );
+
+    this.installThemeObserver();
 
     this.app.workspace.onLayoutReady(() => {
       this.handleActivation();
+      this.applyTextColorToAllChatGptWebviews();
     });
   }
 
   onunload() {
     this.activationSerial += 1;
+
+    if (this.themeRefreshTimer != null) {
+      window.clearTimeout(this.themeRefreshTimer);
+      this.themeRefreshTimer = null;
+    }
+
+    if (this.themeObserver) {
+      this.themeObserver.disconnect();
+      this.themeObserver = null;
+    }
 
     for (const [webview, binding] of this.boundWebviews) {
       try {
@@ -224,6 +326,83 @@ class GptObsidianPlugin extends Plugin {
         binding.webContents.removeListener("destroyed", binding.destroyed);
       } catch (_) {}
       this.guestBindings.delete(id);
+    }
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
+  installThemeObserver() {
+    if (typeof MutationObserver === "undefined") return;
+
+    this.themeObserver = new MutationObserver(() => this.scheduleThemeColorRefresh());
+    const options = { attributes: true, attributeFilter: ["class", "style"] };
+
+    try {
+      this.themeObserver.observe(document.documentElement, options);
+      if (document.body) this.themeObserver.observe(document.body, options);
+    } catch (_) {}
+  }
+
+  scheduleThemeColorRefresh() {
+    if (this.settings.textColorMode !== "theme") return;
+
+    if (this.themeRefreshTimer != null) {
+      window.clearTimeout(this.themeRefreshTimer);
+    }
+
+    this.themeRefreshTimer = window.setTimeout(() => {
+      this.themeRefreshTimer = null;
+      this.applyTextColorToAllChatGptWebviews();
+    }, 80);
+  }
+
+  getThemeTextColor() {
+    const target = document.body || document.documentElement;
+    if (!target) return "#ffffff";
+
+    try {
+      const styles = window.getComputedStyle(target);
+      const themeColor = styles.getPropertyValue("--text-normal").trim();
+      if (themeColor) return sanitizeCssColor(themeColor);
+      if (styles.color) return sanitizeCssColor(styles.color);
+    } catch (_) {}
+
+    return "#ffffff";
+  }
+
+  getConfiguredTextColor() {
+    return this.settings.textColorMode === "white" ? "#ffffff" : this.getThemeTextColor();
+  }
+
+  async applyTextColorToAllChatGptWebviews() {
+    const webviews = new Set(this.boundWebviews.keys());
+
+    if (typeof this.app.workspace.iterateAllLeaves === "function") {
+      try {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          const webview = this.getWebview(leaf);
+          if (webview) webviews.add(webview);
+        });
+      } catch (_) {}
+    }
+
+    for (const webview of webviews) {
+      if (!this.isChatGptWebview(webview)) continue;
+      this.bindWebview(webview);
+      await this.applyTextColor(webview);
+    }
+  }
+
+  async applyTextColor(webview) {
+    if (!webview || !this.isChatGptWebview(webview)) return;
+    if (typeof webview.executeJavaScript !== "function") return;
+
+    try {
+      await webview.executeJavaScript(buildTextColorScript(this.getConfiguredTextColor()), true);
+    } catch (_) {
+      // Navigation may replace the guest document while the style is applied.
     }
   }
 
@@ -246,6 +425,7 @@ class GptObsidianPlugin extends Plugin {
     if (!webview || !this.isChatGptWebview(webview)) return;
 
     this.bindWebview(webview);
+    this.applyTextColor(webview);
     this.schedulePromptFocus(webview, serial);
   }
 
@@ -253,9 +433,7 @@ class GptObsidianPlugin extends Plugin {
     const view = leaf && leaf.view;
     if (!view) return null;
 
-    if (view.webview && typeof view.webview === "object") {
-      return view.webview;
-    }
+    if (view.webview && typeof view.webview === "object") return view.webview;
 
     const root = view.containerEl;
     if (root && typeof root.querySelector === "function") {
@@ -288,6 +466,8 @@ class GptObsidianPlugin extends Plugin {
 
     const domReady = () => {
       this.attachGuestKeyboard(webview);
+      this.applyTextColor(webview);
+
       const activeWebview = this.getWebview(this.app.workspace.activeLeaf);
       if (activeWebview === webview && this.isChatGptWebview(webview)) {
         this.schedulePromptFocus(webview, this.activationSerial);
@@ -297,6 +477,7 @@ class GptObsidianPlugin extends Plugin {
     const navigated = () => {
       if (this.isChatGptWebview(webview)) {
         this.attachGuestKeyboard(webview);
+        this.applyTextColor(webview);
       }
     };
 
@@ -325,9 +506,7 @@ class GptObsidianPlugin extends Plugin {
 
     if (!webContents) return;
 
-    const beforeInput = (event, input) => {
-      this.handleGuestInput(event, input);
-    };
+    const beforeInput = (event, input) => this.handleGuestInput(event, input);
 
     const destroyed = () => {
       const binding = this.guestBindings.get(id);
@@ -377,9 +556,7 @@ class GptObsidianPlugin extends Plugin {
     }
 
     const defaults = manager.defaultKeys;
-    if (defaults && Array.isArray(defaults[commandId])) {
-      return defaults[commandId];
-    }
+    if (defaults && Array.isArray(defaults[commandId])) return defaults[commandId];
 
     if (typeof manager.getHotkeys === "function") {
       try {
@@ -431,11 +608,12 @@ class GptObsidianPlugin extends Plugin {
 
 module.exports = GptObsidianPlugin;
 
-// Exported only for lightweight build-time tests; Obsidian ignores these properties.
 module.exports._test = {
   normalizeKey,
   keyCandidates,
   hotkeyMatchesInput,
   isPotentialObsidianShortcut,
-  isChatGptUrl
+  isChatGptUrl,
+  sanitizeCssColor,
+  buildTextColorScript
 };
