@@ -1,0 +1,170 @@
+name: Build custom Home tab from PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-home-tab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone upstream
+        run: git clone --depth 1 --branch 1.2.2 https://github.com/olrenso/obsidian-home-tab.git /tmp/home-tab
+
+      - name: Patch source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('/tmp/home-tab')
+
+          # Preserve the user's current Home tab choices as defaults for fresh installs.
+          p = root / 'src/settings.ts'
+          s = p.read_text()
+          for old, new in {
+              "logoType: 'default',": "logoType: 'none',",
+              "wordmark: 'Obsidian',": "wordmark: '',",
+              "showbookmarkedFiles: app.internalPlugins.getPluginById('bookmarks') ? true : false,": "showbookmarkedFiles: true,",
+              "omnisearch: false,": "omnisearch: true,",
+          }.items():
+              if old not in s:
+                  raise SystemExit(f'Missing defaults target: {old}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # Native built-in Web Viewer launcher.
+          p = root / 'src/homeTabSearchbar.ts'
+          s = p.read_text()
+          old = '''        this.onLoad ? this.onLoad() : null;\n    }\n\n    public updateActiveSuggester'''
+          new = '''        this.onLoad ? this.onLoad() : null;\n    }\n\n    public async openChatGPT(): Promise<void> {\n        try {\n            const leaf = this.app.workspace.getLeaf('tab');\n            await leaf.setViewState({\n                type: 'webviewer',\n                active: true,\n                state: { url: 'https://chatgpt.com', navigate: true },\n            });\n            await this.app.workspace.revealLeaf(leaf);\n        } catch (error) {\n            console.error('[Home tab] Failed to open ChatGPT in Web viewer:', error);\n            new Notice('Не удалось открыть ChatGPT во встроенном Web viewer.');\n        }\n    }\n\n    public updateActiveSuggester'''
+          if old not in s:
+              raise SystemExit('Missing HomeTabSearchBar insertion point')
+          p.write_text(s.replace(old, new, 1))
+
+          # Fallback when the suggestion scope is not active.
+          p = root / 'src/ui/searchBar.svelte'
+          s = p.read_text()
+          old = '''    function handleKeydown(e: KeyboardEvent): void{\n        // If the input field is empty and a filter is active remove it'''
+          new = '''    function handleKeydown(e: KeyboardEvent): void{\n        if(e.key === 'Enter' && inputValue.trim().toLowerCase() === 'gpt'){\n            e.preventDefault()\n            e.stopPropagation()\n            inputValue = ''\n            void HomeTabSearchBar.openChatGPT()\n            return\n        }\n\n        // If the input field is empty and a filter is active remove it'''
+          if old not in s:
+              raise SystemExit('Missing searchBar insertion point')
+          p.write_text(s.replace(old, new, 1))
+
+          # Give the active suggester a first-chance Enter hook. This is what fixes
+          # Omnisearch consuming Enter before the Svelte input handler sees it.
+          p = root / 'src/suggester/suggester.ts'
+          s = p.read_text()
+          old = '''interface ISuggester{\n    getSuggestions: Function\n    useSelectedItem: Function\n    getDisplayElementProps: Function\n    scrollSelectedItemIntoView: Function\n    onNoSuggestion: Function\n}'''
+          new = '''interface ISuggester{\n    getSuggestions: Function\n    useSelectedItem: Function\n    getDisplayElementProps: Function\n    scrollSelectedItemIntoView: Function\n    onNoSuggestion: Function\n    handleEnter?: (e: KeyboardEvent) => boolean\n}'''
+          if old not in s:
+              raise SystemExit('Missing ISuggester target')
+          s = s.replace(old, new, 1)
+          old = '''        scope.register([], 'Enter', (e) => {\n            e.preventDefault()\n            this.ISuggester.useSelectedItem(this.getSelectedItem())\n        })'''
+          new = '''        scope.register([], 'Enter', (e) => {\n            if(this.ISuggester.handleEnter?.(e)) return\n            e.preventDefault()\n            this.ISuggester.useSelectedItem(this.getSelectedItem())\n        })'''
+          if old not in s:
+              raise SystemExit('Missing suggester Enter target')
+          p.write_text(s.replace(old, new, 1))
+
+          # Omnisearch-specific priority for the gpt launcher.
+          p = root / 'src/suggester/omnisearchSuggester.ts'
+          s = p.read_text()
+          marker = '''    updateSearchBarContainerEl(isActive: boolean){'''
+          insert = '''    handleEnter(e: KeyboardEvent): boolean {\n        if(this.inputEl.value.trim().toLowerCase() !== 'gpt') return false\n        e.preventDefault()\n        e.stopPropagation()\n        this.setInput('')\n        void this.searchBar.openChatGPT()\n        return true\n    }\n\n    updateSearchBarContainerEl(isActive: boolean){'''
+          if marker not in s:
+              raise SystemExit('Missing Omnisearch Enter insertion point')
+          p.write_text(s.replace(marker, insert, 1))
+
+          p = root / 'manifest.json'
+          m = json.loads(p.read_text())
+          m['version'] = '1.2.5'
+          m['minAppVersion'] = '1.8.0'
+          m['description'] = 'A browser-like search tab for your local files. Custom build: type gpt and press Enter to open ChatGPT in a new Web viewer tab.'
+          p.write_text(json.dumps(m, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Build
+        working-directory: /tmp/home-tab
+        run: |
+          npm install --no-audit --no-fund
+          ln -sfn ../src node_modules/src
+          node esbuild.config.mjs production
+          node --check main.js
+
+      - name: Package plugin ZIP
+        shell: bash
+        run: |
+          rm -rf /tmp/home-tab-package /tmp/Home-tab-1.2.5.zip
+          mkdir -p /tmp/home-tab-package
+          cp /tmp/home-tab/main.js /tmp/home-tab-package/main.js
+          cp /tmp/home-tab/manifest.json /tmp/home-tab-package/manifest.json
+          cp /tmp/home-tab/src/styles.css /tmp/home-tab-package/styles.css
+          cp /tmp/home-tab/LICENSE /tmp/home-tab-package/LICENSE
+          cd /tmp/home-tab-package
+          zip -r /tmp/Home-tab-1.2.5.zip .
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Home-tab-1.2.5
+          path: /tmp/Home-tab-1.2.5.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish to central registry branch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin centralize-plugins
+          git checkout -B centralize-plugins origin/centralize-plugins
+
+          mkdir -p home-tab
+          cp /tmp/home-tab/main.js home-tab/main.js
+          cp /tmp/home-tab/manifest.json home-tab/manifest.json
+          cp /tmp/home-tab/src/styles.css home-tab/styles.css
+          cp /tmp/home-tab/LICENSE home-tab/LICENSE
+          cat > home-tab/README.md <<'EOF'
+          # Home tab — volnexx custom build
+
+          Based on olrenso/obsidian-home-tab 1.2.2 (MIT).
+
+          Type `gpt` in the Home tab search field and press Enter to open ChatGPT in a new built-in Obsidian Web viewer tab. Version 1.2.5 gives this launcher priority over the active Omnisearch suggestion scope.
+
+          User-facing defaults are based on the active volnexx Home tab configuration captured on 2026-08-21. Runtime recent-file and bookmark stores remain runtime state and are not baked into defaults.
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path('registry.json')
+          r = json.loads(p.read_text())
+          plugins = r.setdefault('plugins', [])
+          plugins[:] = [x for x in plugins if x.get('id') != 'home-tab']
+          plugins.append({'id':'home-tab','name':'Home tab','version':'1.2.5','path':'home-tab'})
+          p.write_text(json.dumps(r, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+          git add -A home-tab registry.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update custom Home tab to 1.2.5'
+            git push origin centralize-plugins
+          else
+            echo 'Central registry is already up to date.'
+          fi
