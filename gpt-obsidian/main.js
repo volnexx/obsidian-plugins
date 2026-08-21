@@ -1,10 +1,240 @@
-const { Plugin, PluginSettingTab, Setting, Notice } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting } = require("obsidian");
 
+const CHATGPT_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
+const ACTIVATION_PROBE_DELAYS = [0, 120, 400, 900];
+const PROMPT_FOCUS_DELAYS = [30, 160];
 const DEFAULT_SETTINGS = {
-  syncTheme: true,
-  complementaryUserColor: true,
-  autoFocusPrompt: true,
+  textColorMode: "theme"
 };
+
+const CODE_TO_KEY = {
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Space: "space",
+  Enter: "enter",
+  Tab: "tab",
+  Escape: "escape",
+  Backspace: "backspace",
+  Delete: "delete",
+  Insert: "insert",
+  Home: "home",
+  End: "end",
+  PageUp: "pageup",
+  PageDown: "pagedown",
+  ArrowUp: "arrowup",
+  ArrowDown: "arrowdown",
+  ArrowLeft: "arrowleft",
+  ArrowRight: "arrowright"
+};
+
+const FOCUS_PROMPT_SCRIPT = String.raw`(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const blockingOverlay = Array.from(
+    document.querySelectorAll('[role="dialog"], [role="menu"]')
+  ).some(visible);
+  if (blockingOverlay) return false;
+
+  const candidates = [
+    document.querySelector('#prompt-textarea'),
+    document.querySelector('[data-testid="prompt-textarea"]'),
+    ...document.querySelectorAll('textarea')
+  ];
+
+  const input = candidates.find((el) => {
+    if (!visible(el)) return false;
+    if (el.disabled) return false;
+    return el.getAttribute('aria-disabled') !== 'true';
+  });
+
+  if (!input) return false;
+
+  input.focus({ preventScroll: true });
+
+  if (input.isContentEditable) {
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  } else if (typeof input.setSelectionRange === 'function') {
+    const end = String(input.value ?? '').length;
+    input.setSelectionRange(end, end);
+  }
+
+  return document.activeElement === input || input.contains(document.activeElement);
+})()`;
+
+function normalizeKey(value) {
+  if (value == null) return "";
+  const key = String(value).toLowerCase();
+  if (key === " " || key === "spacebar") return "space";
+  if (key === "esc") return "escape";
+  if (key === "return") return "enter";
+  if (key === "del") return "delete";
+  return key;
+}
+
+function keyCandidates(input) {
+  const result = new Set();
+  const direct = normalizeKey(input.key);
+  if (direct) result.add(direct);
+
+  const code = String(input.code || "");
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) result.add(letter[1].toLowerCase());
+
+  const digit = /^Digit([0-9])$/.exec(code);
+  if (digit) result.add(digit[1]);
+
+  const numpad = /^Numpad([0-9])$/.exec(code);
+  if (numpad) result.add(numpad[1]);
+
+  const mapped = CODE_TO_KEY[code];
+  if (mapped) result.add(normalizeKey(mapped));
+
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) {
+    result.add(code.toLowerCase());
+  }
+
+  return result;
+}
+
+function isMacPlatform() {
+  return process.platform === "darwin";
+}
+
+function hotkeyMatchesInput(hotkey, input) {
+  if (!hotkey || !hotkey.key) return false;
+
+  const expected = { ctrl: false, meta: false, alt: false, shift: false };
+
+  for (const rawModifier of hotkey.modifiers || []) {
+    const modifier = String(rawModifier).toLowerCase();
+    if (modifier === "mod") {
+      if (isMacPlatform()) expected.meta = true;
+      else expected.ctrl = true;
+    } else if (modifier === "ctrl" || modifier === "control") {
+      expected.ctrl = true;
+    } else if (modifier === "meta" || modifier === "cmd" || modifier === "command") {
+      expected.meta = true;
+    } else if (modifier === "alt" || modifier === "option") {
+      expected.alt = true;
+    } else if (modifier === "shift") {
+      expected.shift = true;
+    }
+  }
+
+  if (Boolean(input.control) !== expected.ctrl) return false;
+  if (Boolean(input.meta) !== expected.meta) return false;
+  if (Boolean(input.alt) !== expected.alt) return false;
+  if (Boolean(input.shift) !== expected.shift) return false;
+
+  return keyCandidates(input).has(normalizeKey(hotkey.key));
+}
+
+function isPotentialObsidianShortcut(input) {
+  if (!input || input.type !== "keyDown" || input.isComposing) return false;
+  if (input.control || input.meta || input.alt) return true;
+
+  const key = normalizeKey(input.key);
+  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return true;
+  return ["escape", "insert", "delete", "home", "end", "pageup", "pagedown"].includes(key);
+}
+
+function isChatGptUrl(value) {
+  if (!value) return false;
+  try {
+    const url = new URL(String(value));
+    const host = url.hostname.toLowerCase();
+    return CHATGPT_HOSTS.has(host) || host.endsWith(".chatgpt.com");
+  } catch (_) {
+    return false;
+  }
+}
+
+function sanitizeCssColor(value) {
+  const color = String(value || "").trim();
+  if (!color) return "#ffffff";
+
+  try {
+    if (typeof CSS === "undefined" || CSS.supports("color", color)) {
+      return color;
+    }
+  } catch (_) {}
+
+  return "#ffffff";
+}
+
+function buildTextColorScript(color) {
+  const safeColor = sanitizeCssColor(color);
+  const css = `
+:root {
+  --gpt-obsidian-text-color: ${safeColor};
+  --text-primary: ${safeColor} !important;
+  --text-secondary: ${safeColor} !important;
+  --text-tertiary: ${safeColor} !important;
+  --text-quaternary: ${safeColor} !important;
+  --text-placeholder: ${safeColor} !important;
+}
+
+body :where(
+  div, p, span, a, button, label, textarea, input,
+  [contenteditable="true"], [role="button"], [role="menuitem"],
+  [role="option"], [role="tab"], h1, h2, h3, h4, h5, h6,
+  li, dt, dd, th, td, blockquote, figcaption, small, strong, em
+):not(pre):not(pre *):not(code):not(code *) {
+  color: var(--gpt-obsidian-text-color) !important;
+}
+
+#prompt-textarea,
+[data-testid="prompt-textarea"],
+textarea,
+input {
+  color: var(--gpt-obsidian-text-color) !important;
+  caret-color: var(--gpt-obsidian-text-color) !important;
+}
+
+#prompt-textarea::placeholder,
+[data-testid="prompt-textarea"]::placeholder,
+textarea::placeholder,
+input::placeholder,
+[data-placeholder]::before {
+  color: var(--gpt-obsidian-text-color) !important;
+  opacity: 0.72 !important;
+}
+`;
+
+  return `(() => {
+    const styleId = "gpt-obsidian-text-color";
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = ${JSON.stringify(css)};
+    return true;
+  })()`;
+}
 
 class GptObsidianSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -15,423 +245,375 @@ class GptObsidianSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'GPT Obsidian' });
 
     new Setting(containerEl)
-      .setName('Синхронизировать тему')
-      .setDesc('Перекрашивать ChatGPT под текущую тему Obsidian.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.syncTheme)
-        .onChange(async (value) => {
-          this.plugin.settings.syncTheme = value;
-          await this.plugin.saveSettings();
-          this.plugin.forceRefresh();
-        }));
-
-    new Setting(containerEl)
-      .setName('Отрицательный цвет сообщений')
-      .setDesc('Использовать комплементарный цвет акцента темы для твоих сообщений и кнопки отправки.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.complementaryUserColor)
-        .onChange(async (value) => {
-          this.plugin.settings.complementaryUserColor = value;
-          await this.plugin.saveSettings();
-          this.plugin.forceRefresh();
-        }));
-
-    new Setting(containerEl)
-      .setName('Фокусировать поле ввода')
-      .setDesc('После открытия новой вкладки ChatGPT сразу ставить курсор в поле сообщения.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.autoFocusPrompt)
-        .onChange(async (value) => {
-          this.plugin.settings.autoFocusPrompt = value;
-          await this.plugin.saveSettings();
-        }));
+      .setName("Цвет текста ChatGPT")
+      .setDesc("Выберите белый цвет или основной цвет текста текущей темы Obsidian.")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("white", "Белый")
+          .addOption("theme", "Цвет текста темы Obsidian")
+          .setValue(this.plugin.settings.textColorMode)
+          .onChange(async (value) => {
+            this.plugin.settings.textColorMode = value === "white" ? "white" : "theme";
+            await this.plugin.saveSettings();
+            await this.plugin.applyTextColorToAllChatGptWebviews();
+          });
+      });
   }
 }
 
-module.exports = class GptObsidianPlugin extends Plugin {
+class GptObsidianPlugin extends Plugin {
   async onload() {
-    await this.loadSettings();
-    this.webviews = new WeakMap();
-    this.lastThemeSignature = '';
-    this.refreshQueued = false;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.activationSerial = 0;
+    this.boundWebviews = new Map();
+    this.guestBindings = new Map();
+    this.remote = null;
+    this.warnedRemote = false;
+    this.themeRefreshTimer = null;
+    this.themeObserver = null;
 
     this.addSettingTab(new GptObsidianSettingTab(this.app, this));
 
-    this.addCommand({
-      id: 'refresh-gpt-obsidian-theme',
-      name: 'Обновить тему ChatGPT',
-      callback: () => this.forceRefresh(),
+    try {
+      this.remote = require("@electron/remote");
+    } catch (error) {
+      this.warnRemote(error);
+    }
+
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.handleActivation())
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("css-change", () => this.scheduleThemeColorRefresh())
+    );
+
+    this.installThemeObserver();
+
+    this.app.workspace.onLayoutReady(() => {
+      this.handleActivation();
+      this.applyTextColorToAllChatGptWebviews();
     });
-
-    this.registerEvent(this.app.workspace.on('layout-change', () => this.queueScan()));
-    this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.queueScan(true)));
-
-    const observer = new MutationObserver(() => this.queueScan());
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
-    if (document.body) observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
-    this.register(() => observer.disconnect());
-
-    this.registerInterval(window.setInterval(() => this.scanAndSync(false), 120));
-    this.app.workspace.onLayoutReady(() => this.scanAndSync(true));
   }
 
   onunload() {
-    this.webviews = new WeakMap();
-  }
+    this.activationSerial += 1;
 
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (this.themeRefreshTimer != null) {
+      window.clearTimeout(this.themeRefreshTimer);
+      this.themeRefreshTimer = null;
+    }
+
+    if (this.themeObserver) {
+      this.themeObserver.disconnect();
+      this.themeObserver = null;
+    }
+
+    for (const [webview, binding] of this.boundWebviews) {
+      try {
+        webview.removeEventListener("dom-ready", binding.domReady);
+        webview.removeEventListener("did-navigate", binding.navigated);
+        webview.removeEventListener("did-navigate-in-page", binding.navigated);
+      } catch (_) {}
+    }
+    this.boundWebviews.clear();
+
+    for (const [id, binding] of this.guestBindings) {
+      try {
+        binding.webContents.removeListener("before-input-event", binding.beforeInput);
+        binding.webContents.removeListener("destroyed", binding.destroyed);
+      } catch (_) {}
+      this.guestBindings.delete(id);
+    }
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
   }
 
-  queueScan(focusActive = false) {
-    if (this.refreshQueued) return;
-    this.refreshQueued = true;
-    window.setTimeout(() => {
-      this.refreshQueued = false;
-      this.scanAndSync(focusActive);
-    }, 30);
-  }
+  installThemeObserver() {
+    if (typeof MutationObserver === "undefined") return;
 
-  forceRefresh() {
-    this.lastThemeSignature = '';
-    for (const webview of this.collectWebviews()) {
-      const meta = this.webviews.get(webview);
-      if (meta) meta.themeSignature = '';
-    }
-    this.scanAndSync(false, true);
-  }
-
-  collectWebviews() {
-    const result = new Set();
+    this.themeObserver = new MutationObserver(() => this.scheduleThemeColorRefresh());
+    const options = { attributes: true, attributeFilter: ["class", "style"] };
 
     try {
-      const leaves = this.app.workspace.getLeavesOfType('webviewer') || [];
-      for (const leaf of leaves) {
-        const view = leaf?.view;
-        const candidates = [
-          view?.webviewEl,
-          view?.webview,
-          view?.containerEl?.querySelector?.('webview'),
-          leaf?.containerEl?.querySelector?.('webview'),
-        ];
-        for (const candidate of candidates) {
-          if (candidate && typeof candidate.executeJavaScript === 'function') {
-            result.add(candidate);
-          }
-        }
-      }
-    } catch (error) {
-      console.debug('[GPT Obsidian] Could not enumerate Web Viewer leaves:', error);
+      this.themeObserver.observe(document.documentElement, options);
+      if (document.body) this.themeObserver.observe(document.body, options);
+    } catch (_) {}
+  }
+
+  scheduleThemeColorRefresh() {
+    if (this.settings.textColorMode !== "theme") return;
+
+    if (this.themeRefreshTimer != null) {
+      window.clearTimeout(this.themeRefreshTimer);
     }
 
-    for (const webview of document.querySelectorAll('webview')) {
-      if (typeof webview.executeJavaScript === 'function') result.add(webview);
+    this.themeRefreshTimer = window.setTimeout(() => {
+      this.themeRefreshTimer = null;
+      this.applyTextColorToAllChatGptWebviews();
+    }, 80);
+  }
+
+  getThemeTextColor() {
+    const target = document.body || document.documentElement;
+    if (!target) return "#ffffff";
+
+    try {
+      const styles = window.getComputedStyle(target);
+      const themeColor = styles.getPropertyValue("--text-normal").trim();
+      if (themeColor) return sanitizeCssColor(themeColor);
+      if (styles.color) return sanitizeCssColor(styles.color);
+    } catch (_) {}
+
+    return "#ffffff";
+  }
+
+  getConfiguredTextColor() {
+    return this.settings.textColorMode === "white" ? "#ffffff" : this.getThemeTextColor();
+  }
+
+  async applyTextColorToAllChatGptWebviews() {
+    const webviews = new Set(this.boundWebviews.keys());
+
+    if (typeof this.app.workspace.iterateAllLeaves === "function") {
+      try {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          const webview = this.getWebview(leaf);
+          if (webview) webviews.add(webview);
+        });
+      } catch (_) {}
     }
 
-    return [...result];
+    for (const webview of webviews) {
+      if (!this.isChatGptWebview(webview)) continue;
+      this.bindWebview(webview);
+      await this.applyTextColor(webview);
+    }
+  }
+
+  async applyTextColor(webview) {
+    if (!webview || !this.isChatGptWebview(webview)) return;
+    if (typeof webview.executeJavaScript !== "function") return;
+
+    try {
+      await webview.executeJavaScript(buildTextColorScript(this.getConfiguredTextColor()), true);
+    } catch (_) {
+      // Navigation may replace the guest document while the style is applied.
+    }
+  }
+
+  handleActivation() {
+    const serial = ++this.activationSerial;
+
+    for (const delay of ACTIVATION_PROBE_DELAYS) {
+      window.setTimeout(() => {
+        if (serial !== this.activationSerial) return;
+        this.probeActiveLeaf(serial);
+      }, delay);
+    }
+  }
+
+  probeActiveLeaf(serial) {
+    if (serial !== this.activationSerial) return;
+
+    const leaf = this.app.workspace.activeLeaf;
+    const webview = this.getWebview(leaf);
+    if (!webview || !this.isChatGptWebview(webview)) return;
+
+    this.bindWebview(webview);
+    this.applyTextColor(webview);
+    this.schedulePromptFocus(webview, serial);
+  }
+
+  getWebview(leaf) {
+    const view = leaf && leaf.view;
+    if (!view) return null;
+
+    if (view.webview && typeof view.webview === "object") return view.webview;
+
+    const root = view.containerEl;
+    if (root && typeof root.querySelector === "function") {
+      return root.querySelector("webview");
+    }
+
+    return null;
   }
 
   getWebviewUrl(webview) {
     try {
-      const current = typeof webview.getURL === 'function' ? webview.getURL() : '';
-      if (current) return current;
+      if (typeof webview.getURL === "function") {
+        const current = webview.getURL();
+        if (current) return current;
+      }
     } catch (_) {}
-    return webview.getAttribute?.('src') || webview.src || '';
+
+    return webview.src || webview.getAttribute?.("src") || "";
   }
 
-  isChatGptUrl(url) {
-    if (!url) return false;
+  isChatGptWebview(webview) {
+    return isChatGptUrl(this.getWebviewUrl(webview));
+  }
+
+  bindWebview(webview) {
+    if (this.boundWebviews.has(webview)) {
+      this.attachGuestKeyboard(webview);
+      return;
+    }
+
+    const domReady = () => {
+      this.attachGuestKeyboard(webview);
+      this.applyTextColor(webview);
+
+      const activeWebview = this.getWebview(this.app.workspace.activeLeaf);
+      if (activeWebview === webview && this.isChatGptWebview(webview)) {
+        this.schedulePromptFocus(webview, this.activationSerial);
+      }
+    };
+
+    const navigated = () => {
+      if (this.isChatGptWebview(webview)) {
+        this.attachGuestKeyboard(webview);
+        this.applyTextColor(webview);
+      }
+    };
+
+    webview.addEventListener("dom-ready", domReady);
+    webview.addEventListener("did-navigate", navigated);
+    webview.addEventListener("did-navigate-in-page", navigated);
+    this.boundWebviews.set(webview, { domReady, navigated });
+
+    this.attachGuestKeyboard(webview);
+  }
+
+  attachGuestKeyboard(webview) {
+    if (!this.remote || !this.isChatGptWebview(webview)) return;
+    if (typeof webview.getWebContentsId !== "function") return;
+
+    let id;
+    let webContents;
     try {
-      const host = new URL(url).hostname.toLowerCase();
-      return host === 'chatgpt.com' || host.endsWith('.chatgpt.com');
-    } catch (_) {
-      return String(url).toLowerCase().includes('chatgpt.com');
+      id = webview.getWebContentsId();
+      if (!id || this.guestBindings.has(id)) return;
+      webContents = this.remote.webContents.fromId(id);
+    } catch (error) {
+      this.warnRemote(error);
+      return;
+    }
+
+    if (!webContents) return;
+
+    const beforeInput = (event, input) => this.handleGuestInput(event, input);
+
+    const destroyed = () => {
+      const binding = this.guestBindings.get(id);
+      if (!binding) return;
+      try {
+        binding.webContents.removeListener("before-input-event", binding.beforeInput);
+      } catch (_) {}
+      this.guestBindings.delete(id);
+    };
+
+    webContents.on("before-input-event", beforeInput);
+    webContents.once("destroyed", destroyed);
+    this.guestBindings.set(id, { webContents, beforeInput, destroyed });
+  }
+
+  handleGuestInput(event, input) {
+    if (!isPotentialObsidianShortcut(input)) return;
+
+    const commandsApi = this.app.commands;
+    const hotkeyManager = this.app.hotkeyManager;
+    const commands = commandsApi && commandsApi.commands;
+    if (!commandsApi || !hotkeyManager || !commands) return;
+
+    for (const commandId of Object.keys(commands)) {
+      const hotkeys = this.getEffectiveHotkeys(hotkeyManager, commandId);
+      if (!hotkeys || hotkeys.length === 0) continue;
+      if (!hotkeys.some((hotkey) => hotkeyMatchesInput(hotkey, input))) continue;
+
+      let handled = false;
+      try {
+        handled = Boolean(commandsApi.executeCommandById(commandId));
+      } catch (error) {
+        console.error(`[GPT Obsidian] Failed to execute command ${commandId}:`, error);
+      }
+
+      if (handled) {
+        event.preventDefault();
+        return;
+      }
     }
   }
 
-  attachWebview(webview) {
-    if (this.webviews.has(webview)) return this.webviews.get(webview);
+  getEffectiveHotkeys(manager, commandId) {
+    const custom = manager.customKeys;
+    if (custom && Object.prototype.hasOwnProperty.call(custom, commandId)) {
+      return Array.isArray(custom[commandId]) ? custom[commandId] : [];
+    }
 
-    const meta = {
-      themeSignature: '',
-      focusDoneForDocument: false,
-      handlers: [],
-    };
+    const defaults = manager.defaultKeys;
+    if (defaults && Array.isArray(defaults[commandId])) return defaults[commandId];
 
-    const onDomReady = () => {
-      meta.themeSignature = '';
-      meta.focusDoneForDocument = false;
-      this.applyToWebview(webview, true, true);
-    };
-    const onNavigate = () => {
-      meta.themeSignature = '';
-      meta.focusDoneForDocument = false;
-      window.setTimeout(() => this.applyToWebview(webview, true, true), 40);
-    };
-
-    for (const [name, fn] of [
-      ['dom-ready', onDomReady],
-      ['did-navigate', onNavigate],
-      ['did-navigate-in-page', onNavigate],
-    ]) {
+    if (typeof manager.getHotkeys === "function") {
       try {
-        webview.addEventListener(name, fn);
-        meta.handlers.push([name, fn]);
+        const hotkeys = manager.getHotkeys(commandId);
+        if (Array.isArray(hotkeys)) return hotkeys;
       } catch (_) {}
     }
 
-    this.webviews.set(webview, meta);
-    return meta;
-  }
-
-  scanAndSync(focusActive = false, force = false) {
-    const theme = this.readTheme();
-    const signature = JSON.stringify(theme);
-    const globalThemeChanged = signature !== this.lastThemeSignature;
-    if (globalThemeChanged) this.lastThemeSignature = signature;
-
-    for (const webview of this.collectWebviews()) {
-      const url = this.getWebviewUrl(webview);
-      if (!this.isChatGptUrl(url)) continue;
-
-      const meta = this.attachWebview(webview);
-      const shouldTheme = force || globalThemeChanged || meta.themeSignature !== signature;
-      const shouldFocus = this.settings.autoFocusPrompt && !meta.focusDoneForDocument;
-
-      if (shouldTheme || shouldFocus) {
-        this.applyToWebview(webview, shouldFocus, force, theme, signature);
-      }
-    }
-  }
-
-  readTheme() {
-    const style = getComputedStyle(document.body || document.documentElement);
-    const read = (name, fallback) => {
-      const value = style.getPropertyValue(name).trim();
-      return this.resolveColor(value || fallback, fallback);
-    };
-
-    const accent = read('--interactive-accent', '#7f6df2');
-    const accentHover = read('--interactive-accent-hover', accent);
-    const negative = this.settings.complementaryUserColor ? this.invertColor(accent) : accent;
-
-    return {
-      bgPrimary: read('--background-primary', '#111111'),
-      bgSecondary: read('--background-secondary', '#171717'),
-      bgSecondaryAlt: read('--background-secondary-alt', '#202020'),
-      textNormal: read('--text-normal', '#ececec'),
-      textMuted: read('--text-muted', '#a0a0a0'),
-      textFaint: read('--text-faint', '#777777'),
-      border: read('--background-modifier-border', '#2b2b2b'),
-      accent,
-      accentHover,
-      negative,
-      negativeHover: this.mixColor(negative, '#ffffff', 0.12),
-      negativeText: this.contrastText(negative),
-    };
-  }
-
-  resolveColor(value, fallback) {
-    if (!value) return fallback;
-    const probe = document.createElement('span');
-    probe.style.position = 'fixed';
-    probe.style.pointerEvents = 'none';
-    probe.style.opacity = '0';
-    probe.style.color = value;
-    (document.body || document.documentElement).appendChild(probe);
-    const resolved = getComputedStyle(probe).color;
-    probe.remove();
-    return resolved || value || fallback;
-  }
-
-  parseRgb(color) {
-    const match = String(color).match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
-    if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
-    const hex = String(color).trim().match(/^#([0-9a-f]{6})$/i);
-    if (hex) {
-      const n = parseInt(hex[1], 16);
-      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-    }
-    return [127, 109, 242];
-  }
-
-  rgbString(rgb) {
-    return `rgb(${Math.round(rgb[0])}, ${Math.round(rgb[1])}, ${Math.round(rgb[2])})`;
-  }
-
-  invertColor(color) {
-    const [r, g, b] = this.parseRgb(color);
-    return this.rgbString([255 - r, 255 - g, 255 - b]);
-  }
-
-  mixColor(a, b, amount) {
-    const ca = this.parseRgb(a);
-    const cb = this.parseRgb(b);
-    return this.rgbString(ca.map((v, i) => v * (1 - amount) + cb[i] * amount));
-  }
-
-  contrastText(color) {
-    const [r, g, b] = this.parseRgb(color).map((v) => v / 255);
-    const linear = (v) => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-    const lum = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
-    return lum > 0.45 ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)';
-  }
-
-  applyToWebview(webview, requestFocus = false, force = false, theme = null, signature = null) {
-    const url = this.getWebviewUrl(webview);
-    if (!this.isChatGptUrl(url)) return;
-
-    const meta = this.attachWebview(webview);
-    const palette = theme || this.readTheme();
-    const sig = signature || JSON.stringify(palette);
-
-    if (this.settings.syncTheme && (force || meta.themeSignature !== sig)) {
-      const script = this.makeThemeScript(palette);
+    if (typeof manager.getDefaultHotkeys === "function") {
       try {
-        const p = webview.executeJavaScript(script, true);
-        if (p && typeof p.catch === 'function') p.catch((error) => console.debug('[GPT Obsidian] Theme injection failed:', error));
-        meta.themeSignature = sig;
-      } catch (error) {
-        console.debug('[GPT Obsidian] Theme injection failed:', error);
-      }
+        const hotkeys = manager.getDefaultHotkeys(commandId);
+        if (Array.isArray(hotkeys)) return hotkeys;
+      } catch (_) {}
     }
 
-    if (requestFocus && this.settings.autoFocusPrompt && !meta.focusDoneForDocument) {
-      meta.focusDoneForDocument = true;
-      try { webview.focus?.(); } catch (_) {}
-      this.focusPrompt(webview);
+    return [];
+  }
+
+  schedulePromptFocus(webview, serial) {
+    for (const delay of PROMPT_FOCUS_DELAYS) {
+      window.setTimeout(() => {
+        if (serial !== this.activationSerial) return;
+        if (this.getWebview(this.app.workspace.activeLeaf) !== webview) return;
+        if (!this.isChatGptWebview(webview)) return;
+        this.focusPrompt(webview);
+      }, delay);
     }
   }
 
-  makeThemeScript(theme) {
-    const vars = {
-      '--go-bg-primary': theme.bgPrimary,
-      '--go-bg-secondary': theme.bgSecondary,
-      '--go-bg-secondary-alt': theme.bgSecondaryAlt,
-      '--go-text-normal': theme.textNormal,
-      '--go-text-muted': theme.textMuted,
-      '--go-text-faint': theme.textFaint,
-      '--go-border': theme.border,
-      '--go-accent': theme.accent,
-      '--go-accent-hover': theme.accentHover,
-      '--go-negative': theme.negative,
-      '--go-negative-hover': theme.negativeHover,
-      '--go-negative-text': theme.negativeText,
-    };
-
-    const css = `
-      :root {
-        --main-surface-background: var(--go-bg-primary) !important;
-        --main-surface-primary: var(--go-bg-primary) !important;
-        --main-surface-secondary: var(--go-bg-secondary) !important;
-        --main-surface-tertiary: var(--go-bg-secondary-alt) !important;
-        --sidebar-surface-primary: var(--go-bg-secondary) !important;
-        --sidebar-surface-secondary: var(--go-bg-secondary-alt) !important;
-        --sidebar-surface-tertiary: var(--go-bg-secondary-alt) !important;
-        --message-surface: var(--go-bg-secondary-alt) !important;
-        --composer-surface: var(--go-bg-secondary) !important;
-        --composer-surface-primary: var(--go-bg-secondary) !important;
-        --text-primary: var(--go-text-normal) !important;
-        --text-secondary: var(--go-text-muted) !important;
-        --text-tertiary: var(--go-text-faint) !important;
-        --border-light: var(--go-border) !important;
-        --border-medium: var(--go-border) !important;
-        --link: var(--go-accent) !important;
-        --composer-blue-bg: var(--go-negative) !important;
-        --composer-blue-hover: var(--go-negative-hover) !important;
-        --composer-blue-text: var(--go-negative-text) !important;
-      }
-
-      html, body, main, #__next { background: var(--go-bg-primary) !important; color: var(--go-text-normal) !important; }
-      nav, aside { background-color: var(--go-bg-secondary) !important; }
-
-      [data-message-author-role="user"] .user-message-bubble-color,
-      [data-message-author-role="user"] [class*="user-message-bubble"],
-      [data-message-author-role="user"] [class*="bg-token-message-surface"] {
-        background-color: var(--go-negative) !important;
-        color: var(--go-negative-text) !important;
-      }
-      [data-message-author-role="user"] .user-message-bubble-color *,
-      [data-message-author-role="user"] [class*="user-message-bubble"] * {
-        color: var(--go-negative-text) !important;
-      }
-
-      button[data-testid="send-button"],
-      [data-testid="send-button"] {
-        background-color: var(--go-negative) !important;
-        color: var(--go-negative-text) !important;
-        border-color: var(--go-negative) !important;
-      }
-      button[data-testid="send-button"]:hover,
-      [data-testid="send-button"]:hover { background-color: var(--go-negative-hover) !important; }
-      button[data-testid="send-button"] svg,
-      [data-testid="send-button"] svg { color: var(--go-negative-text) !important; stroke: currentColor !important; }
-
-      #prompt-textarea,
-      form [contenteditable="true"] {
-        caret-color: var(--go-accent) !important;
-      }
-
-      ::selection { background: var(--go-accent) !important; color: var(--go-bg-primary) !important; }
-      a { color: var(--go-accent) !important; }
-    `;
-
-    return `(() => {
-      const root = document.documentElement;
-      const vars = ${JSON.stringify(vars)};
-      for (const [key, value] of Object.entries(vars)) root.style.setProperty(key, value);
-      let style = document.getElementById('gpt-obsidian-theme');
-      if (!style) {
-        style = document.createElement('style');
-        style.id = 'gpt-obsidian-theme';
-        (document.head || root).appendChild(style);
-      }
-      style.textContent = ${JSON.stringify(css)};
-      root.dataset.gptObsidian = '1';
-      return true;
-    })()`;
-  }
-
-  focusPrompt(webview) {
-    const script = `(() => {
-      const focus = () => {
-        const el = document.querySelector('#prompt-textarea') ||
-          document.querySelector('[contenteditable="true"][data-virtualkeyboard]') ||
-          document.querySelector('form [contenteditable="true"]') ||
-          document.querySelector('textarea');
-        if (!el) return false;
-        try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); }
-        if (el instanceof HTMLElement) {
-          const selection = window.getSelection?.();
-          if (selection && el.isContentEditable) {
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-        }
-        return true;
-      };
-      if (focus()) return true;
-      let attempts = 0;
-      const timer = setInterval(() => {
-        attempts += 1;
-        if (focus() || attempts >= 20) clearInterval(timer);
-      }, 100);
-      return false;
-    })()`;
-
+  async focusPrompt(webview) {
     try {
-      const p = webview.executeJavaScript(script, true);
-      if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch (_) {}
+      if (typeof webview.focus === "function") webview.focus();
+      if (typeof webview.executeJavaScript !== "function") return;
+      await webview.executeJavaScript(FOCUS_PROMPT_SCRIPT, true);
+    } catch (_) {
+      // A navigation can replace the guest document between activation and execution.
+    }
   }
+
+  warnRemote(error) {
+    if (this.warnedRemote) return;
+    this.warnedRemote = true;
+    console.warn(
+      "[GPT Obsidian] Electron guest keyboard interception is unavailable; prompt autofocus will still work.",
+      error
+    );
+  }
+}
+
+module.exports = GptObsidianPlugin;
+
+module.exports._test = {
+  normalizeKey,
+  keyCandidates,
+  hotkeyMatchesInput,
+  isPotentialObsidianShortcut,
+  isChatGptUrl,
+  sanitizeCssColor,
+  buildTextColorScript
 };

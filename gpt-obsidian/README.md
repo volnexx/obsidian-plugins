@@ -1,10 +1,14 @@
 # GPT Obsidian
 
-Custom Obsidian plugin for ChatGPT opened in the built-in Web Viewer.
+Small desktop-only companion plugin for ChatGPT tabs opened in Obsidian's core Web viewer.
 
-- Synchronizes ChatGPT surfaces/text/borders with the current Obsidian theme.
-- Colors user-message bubbles and the send button with the complementary (RGB-inverted) theme accent.
-- Automatically focuses the ChatGPT prompt when a new ChatGPT Web Viewer document opens.
-- Re-applies styling after ChatGPT navigations and follows animated Obsidian theme changes.
+## Behaviour
 
-Designed for the built-in Obsidian Web Viewer and desktop Obsidian.
+- Obsidian-assigned keyboard shortcuts take priority while a ChatGPT Web viewer is focused.
+- Normal text-editing shortcuts that are not assigned to an Obsidian command remain inside ChatGPT.
+- Returning to an existing ChatGPT tab automatically focuses the prompt field.
+- Visible ChatGPT dialogs and menus block autofocus so the plugin does not steal focus from them.
+- ChatGPT text color can be set to pure white or to Obsidian's current theme text color.
+- Theme text color refreshes automatically when the Obsidian theme or its CSS settings change.
+- Code blocks keep their own syntax-highlighting colors.
+- Works with ChatGPT tabs opened by Home Tab or by any other method.
