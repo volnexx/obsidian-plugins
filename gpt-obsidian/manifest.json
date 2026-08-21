@@ -1,0 +1,9 @@
+{
+  "id": "gpt-obsidian",
+  "name": "GPT Obsidian",
+  "version": "1.0.0",
+  "minAppVersion": "1.8.0",
+  "description": "Makes ChatGPT Web viewer tabs respect Obsidian hotkeys and focus the prompt automatically when activated.",
+  "author": "volnexx",
+  "isDesktopOnly": true
+}
