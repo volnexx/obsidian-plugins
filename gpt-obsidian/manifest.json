@@ -1,9 +1,9 @@
 {
   "id": "gpt-obsidian",
   "name": "GPT Obsidian",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "1.8.0",
-  "description": "Integrates ChatGPT Web viewer tabs with Obsidian hotkeys, prompt autofocus, and configurable text color.",
+  "description": "Integrates ChatGPT Web viewer tabs with Obsidian hotkeys, prompt autofocus, configurable text color, and negative theme accent for user messages and send button.",
   "author": "volnexx",
   "isDesktopOnly": true
 }
