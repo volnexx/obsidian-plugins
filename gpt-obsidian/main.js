@@ -6,6 +6,50 @@ const PROMPT_FOCUS_DELAYS = [30, 160];
 const DEFAULT_SETTINGS = {
   textColorMode: "theme"
 };
+const BRIDGE_TIMEOUT_MS = 120000;
+const CONTROL_VERSION = "1";
+
+function redactBridgeValue(value) {
+  const secret = /(authorization|cookie|token|secret|password|api[_-]?key|credential|\.env)/i;
+  if (Array.isArray(value)) return value.map(redactBridgeValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, secret.test(key) ? "[REDACTED]" : redactBridgeValue(item)]));
+  }
+  return typeof value === "string" && secret.test(value) ? "[REDACTED]" : value;
+}
+
+function controlPrompt(request, context) {
+  const safe = redactBridgeValue({
+    requestId: request.toolCall?.toolCallId,
+    sessionId: request.sessionId,
+    backendId: context?.backendId || null,
+    action: request.toolCall?.kind,
+    tool: request.toolCall?.title,
+    input: request.toolCall?.rawInput,
+    relatedPaths: request.toolCall?.locations,
+    options: request.options.map((option) => ({ optionId: option.optionId, kind: option.kind, name: option.name }))
+  });
+  return `[COPILOT PERMISSION REQUEST]\n\n${JSON.stringify(safe, null, 2)}\n\nPermission policy:\n- Prefer the least-privileged option that still lets the requested action proceed.\n- Default to Allow Once when it is available and sufficient.\n- Use Allow for Session only when repeated equivalent actions are clearly required for the current task.\n- Use Allow Always only when there is a strong, explicit reason.\n- Reject actions that are unsafe, unrelated, destructive beyond the task, or expose secrets.\n\nReply with exactly one optionId inside:\n<GPT_COPILOT_CONTROL version="${CONTROL_VERSION}">\nrequestId: ${safe.requestId}\nsessionId: ${safe.sessionId}\naction: permission_decision\noptionId: <one of the listed optionId values>\n</GPT_COPILOT_CONTROL>\n\nYou may instead state one unambiguous available option in natural language.`;
+}
+
+function parsePermissionDecision(text, request) {
+  const body = String(text || "");
+  const strict = /<GPT_COPILOT_CONTROL\s+version=["']1["']>\s*([\s\S]*?)<\/GPT_COPILOT_CONTROL>/i.exec(body);
+  const fields = strict && Object.fromEntries(strict[1].split(/\r?\n/).map((line) => line.match(/^\s*([\w]+)\s*:\s*(.*?)\s*$/)).filter(Boolean).map((m) => [m[1], m[2]]));
+  if (strict) {
+    if (!fields || fields.requestId !== request.toolCall.toolCallId || fields.sessionId !== request.sessionId || fields.action !== "permission_decision") return null;
+    return request.options.some((option) => option.optionId === fields.optionId) ? fields.optionId : null;
+  }
+  const lower = body.toLowerCase();
+  const matches = request.options.filter((option) => {
+    const name = String(option.name || "").toLowerCase();
+    if (name && lower.includes(name)) return true;
+    if (option.kind === "allow_always") return /allow for session|разреш.*сесси/.test(lower);
+    if (option.kind === "allow_once") return /allow once|разреш.*один раз/.test(lower);
+    return option.kind.startsWith("reject") && /\breject\b|\bdeny\b|отклон/.test(lower);
+  });
+  return matches.length === 1 ? matches[0].optionId : null;
+}
 
 const CODE_TO_KEY = {
   Backquote: "`",
@@ -355,6 +399,8 @@ class GptObsidianPlugin extends Plugin {
     this.warnedRemote = false;
     this.themeRefreshTimer = null;
     this.themeObserver = null;
+    this.bridgeBindings = new Map();
+    this.copilotUnregister = null;
 
     this.addSettingTab(new GptObsidianSettingTab(this.app, this));
 
@@ -373,6 +419,7 @@ class GptObsidianPlugin extends Plugin {
     );
 
     this.installThemeObserver();
+    this.registerCopilotBridge();
 
     this.app.workspace.onLayoutReady(() => {
       this.handleActivation();
@@ -401,6 +448,10 @@ class GptObsidianPlugin extends Plugin {
       } catch (_) {}
     }
     this.boundWebviews.clear();
+    if (this.copilotUnregister) this.copilotUnregister();
+    this.copilotUnregister = null;
+    for (const binding of this.bridgeBindings.values()) this.cancelBridgePending(binding);
+    this.bridgeBindings.clear();
 
     for (const [id, binding] of this.guestBindings) {
       try {
@@ -612,6 +663,9 @@ class GptObsidianPlugin extends Plugin {
     }
 
     const domReady = () => {
+      const binding = this.boundWebviews.get(webview);
+      if (binding) binding.domReadySeen = true;
+      this.bridgeBindingFor(webview);
       this.attachGuestKeyboard(webview);
       this.applyAppearance(webview);
 
@@ -622,6 +676,8 @@ class GptObsidianPlugin extends Plugin {
     };
 
     const navigated = () => {
+      const binding = this.boundWebviews.get(webview);
+      if (binding) binding.domReadySeen = false;
       if (this.isChatGptWebview(webview)) {
         this.attachGuestKeyboard(webview);
         this.applyAppearance(webview);
@@ -631,13 +687,13 @@ class GptObsidianPlugin extends Plugin {
     webview.addEventListener("dom-ready", domReady);
     webview.addEventListener("did-navigate", navigated);
     webview.addEventListener("did-navigate-in-page", navigated);
-    this.boundWebviews.set(webview, { domReady, navigated });
-
-    this.attachGuestKeyboard(webview);
+    this.boundWebviews.set(webview, { domReady, navigated, domReadySeen: false });
+    this.bridgeBindingFor(webview);
   }
 
   attachGuestKeyboard(webview) {
     if (!this.remote || !this.isChatGptWebview(webview)) return;
+    if (!this.boundWebviews.get(webview)?.domReadySeen) return;
     if (typeof webview.getWebContentsId !== "function") return;
 
     let id;
@@ -751,6 +807,255 @@ class GptObsidianPlugin extends Plugin {
       error
     );
   }
+
+  registerCopilotBridge() {
+    const copilot = this.app.plugins?.plugins?.copilot;
+    const manager = copilot?.agentSessionManager;
+    if (!manager || typeof manager.registerExternalPermissionResolver !== "function") return;
+    this.copilotUnregister = manager.registerExternalPermissionResolver((request, context) => this.resolveCopilotPermission(request, context));
+  }
+
+  bridgeBindingFor(webview) {
+    let binding = this.bridgeBindings.get(webview);
+    if (binding) return binding;
+    const leaf = this.findLeafForWebview(webview);
+    const host = leaf?.view?.containerEl || webview.parentElement;
+    const button = document.createElement("button");
+    button.className = "clickable-icon gpt-copilot-bridge-toggle";
+    button.textContent = "GPT ↔ Copilot OFF";
+    button.setAttribute("aria-label", "GPT ↔ Copilot bridge");
+    host?.prepend(button);
+    binding = { webview, leaf, button, enabled: false, sessionId: null, pending: null, pollTimer: null };
+    button.addEventListener("click", () => this.toggleBridge(binding));
+    this.bridgeBindings.set(webview, binding);
+    return binding;
+  }
+
+  findLeafForWebview(webview) {
+    let result = null;
+    this.app.workspace.iterateAllLeaves?.((leaf) => { if (this.getWebview(leaf) === webview) result = leaf; });
+    return result;
+  }
+
+  toggleBridge(binding) {
+    if (binding.enabled) {
+      binding.enabled = false; binding.sessionId = null; this.cancelBridgePending(binding); this.setBridgeStatus(binding, "OFF"); return;
+    }
+    const manager = this.app.plugins?.plugins?.copilot?.agentSessionManager;
+    const sessionId = manager?.getActiveSession?.()?.getBackendSessionId?.();
+    if (!sessionId) { this.setBridgeStatus(binding, "No Agent session"); return; }
+    binding.enabled = true; binding.sessionId = sessionId; this.setBridgeStatus(binding, "ON");
+  }
+
+  setBridgeStatus(binding, status) { if (binding.button) binding.button.textContent = `GPT ↔ Copilot ${status}`; }
+
+  clearBridgePending(binding, pending = binding.pending) {
+    if (!pending) return;
+    if (pending.timer) window.clearTimeout(pending.timer);
+    if (binding.pollTimer) { window.clearInterval(binding.pollTimer); binding.pollTimer = null; }
+    if (binding.pending === pending) binding.pending = null;
+  }
+
+  cancelBridgePending(binding) {
+    const pending = binding.pending;
+    if (!pending) return;
+    this.clearBridgePending(binding, pending);
+    pending.resolve(null);
+  }
+
+  async resolveCopilotPermission(request, context) {
+    const binding = [...this.bridgeBindings.values()].find((candidate) => candidate.enabled && candidate.sessionId === request.sessionId && this.isChatGptWebview(candidate.webview));
+    if (!binding || binding.pending) return null;
+    this.setBridgeStatus(binding, "Waiting");
+    try {
+      await this.sendBridgeMessage(binding.webview, controlPrompt(request, context));
+    } catch (error) {
+      console.error("[GPT Obsidian] permission bridge send failed:", error);
+      if (binding.button) binding.button.title = `Bridge send failed: ${error?.message || error}`;
+      this.setBridgeStatus(binding, "Bridge error");
+      return null;
+    }
+    return new Promise((resolve) => {
+      const pending = binding.pending = { requestId: request.toolCall.toolCallId, sessionId: request.sessionId, resolve, timer: null, last: "", stable: 0 };
+      pending.timer = window.setTimeout(() => { if (binding.pending === pending) { this.cancelBridgePending(binding); this.setBridgeStatus(binding, "ON"); } }, BRIDGE_TIMEOUT_MS);
+      binding.pollTimer = window.setInterval(async () => {
+        if (binding.pending !== pending || !binding.enabled || binding.sessionId !== request.sessionId) return;
+        const state = await this.readAssistantState(binding.webview).catch(() => null);
+        if (!state || state.generating || !state.text) return;
+        pending.stable = pending.last === state.text ? pending.stable + 1 : 0; pending.last = state.text;
+        if (pending.stable < 1) return;
+        const optionId = parsePermissionDecision(state.text, request);
+        if (!optionId) {
+          if (binding.button) binding.button.title = "Bridge response could not be mapped to a valid permission option.";
+          this.cancelBridgePending(binding);
+          this.setBridgeStatus(binding, "Bridge error");
+          return;
+        }
+        if (binding.button) binding.button.title = "GPT ↔ Copilot bridge";
+        this.clearBridgePending(binding, pending);
+        this.setBridgeStatus(binding, "Resolved ✓");
+        window.setTimeout(() => this.setBridgeStatus(binding, "ON"), 1500);
+        resolve({ outcome: { outcome: "selected", optionId } });
+      }, 700);
+    });
+  }
+
+  getGuestWebContents(webview) {
+    if (!webview || typeof webview.getWebContentsId !== "function") return null;
+
+    try {
+      const id = webview.getWebContentsId();
+      if (!id) return null;
+
+      const existing = this.guestBindings.get(id)?.webContents;
+      if (existing && !existing.isDestroyed?.()) return existing;
+
+      const remote = this.remote || require("@electron/remote");
+      return remote?.webContents?.fromId?.(id) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async sendBridgeMessage(webview, text) {
+    if (!webview || typeof webview.executeJavaScript !== "function") {
+      throw new Error("ChatGPT webview is unavailable");
+    }
+
+    // Focus the actual ChatGPT composer first. We intentionally do not mutate
+    // ProseMirror/React state from the host process: current ChatGPT versions
+    // can ignore synthetic InputEvents even though text appears in the DOM.
+    const composer = await webview.executeJavaScript(`(() => {
+      const visible = (el) => {
+        if (!el) return false;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const selectors = [
+        '#prompt-textarea',
+        '[data-testid="prompt-textarea"]',
+        'textarea[placeholder]',
+        'textarea',
+        '[contenteditable="true"][data-virtualkeyboard]'
+      ];
+
+      const candidates = selectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
+      const input = candidates.find((el) => visible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true');
+      if (!input) return { ok: false, reason: 'prompt unavailable' };
+
+      input.focus({ preventScroll: true });
+
+      if (input.isContentEditable) {
+        const selection = window.getSelection();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(input);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      } else if (typeof input.setSelectionRange === 'function') {
+        const end = String(input.value || '').length;
+        input.setSelectionRange(end, end);
+      }
+
+      return { ok: document.activeElement === input || input.contains(document.activeElement) };
+    })()`, true);
+
+    if (!composer?.ok) {
+      throw new Error(composer?.reason || "failed to focus ChatGPT prompt");
+    }
+
+    const guest = this.getGuestWebContents(webview);
+    if (!guest || guest.isDestroyed?.()) {
+      throw new Error("ChatGPT guest webContents is unavailable");
+    }
+
+    // Use Electron's native text insertion. This reaches the focused renderer
+    // through the same input path as normal typing and updates ChatGPT's editor
+    // state, unlike direct textContent/value mutation.
+    guest.insertText(String(text));
+
+    const sent = await webview.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const visible = (el) => {
+        if (!el) return false;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const sendSelector = [
+        'button[data-testid="send-button"]',
+        'button[data-testid="composer-submit-button"]',
+        'button#composer-submit-button',
+        'button[aria-label*="Send" i]',
+        'button[aria-label*="Отправ" i]',
+        'button[type="submit"]'
+      ].join(',');
+
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const send = [...document.querySelectorAll(sendSelector)].find((button) =>
+          visible(button) &&
+          !button.disabled &&
+          button.getAttribute('aria-disabled') !== 'true'
+        );
+
+        if (send) {
+          send.click();
+          return { ok: true, method: 'button' };
+        }
+
+        await sleep(50);
+      }
+
+      return { ok: false, reason: 'send button unavailable' };
+    })()`, true);
+
+    if (!sent?.ok) {
+      // Final fallback: send a real Enter key to the focused ChatGPT composer.
+      // before-input-event intentionally ignores plain Enter, so Obsidian hotkey
+      // interception does not consume this submission.
+      guest.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
+      guest.sendInputEvent({ type: "char", keyCode: "ENTER" });
+      guest.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+    }
+
+    // Verify that ChatGPT actually accepted the message instead of assuming that
+    // a synthetic click/Enter succeeded.
+    const accepted = await webview.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const generating = Boolean(document.querySelector(
+          '[data-testid="stop-button"],button[aria-label*="Stop" i],button[aria-label*="Останов" i]'
+        ));
+        const lastUser = [...document.querySelectorAll('[data-message-author-role="user"]')]
+          .map((node) => node.innerText || node.textContent || '')
+          .filter(Boolean)
+          .pop() || '';
+
+        if (generating || lastUser.includes('[COPILOT PERMISSION REQUEST]')) {
+          return true;
+        }
+        await sleep(100);
+      }
+      return false;
+    })()`, true);
+
+    if (!accepted) {
+      throw new Error("ChatGPT did not accept the permission prompt");
+    }
+
+    return true;
+  }
+
+  async readAssistantState(webview) {
+    return webview.executeJavaScript(`(() => ({ generating: Boolean(document.querySelector('[data-testid="stop-button"],button[aria-label*="Stop"]')), text: [...document.querySelectorAll('[data-message-author-role="assistant"]')].map((n) => n.innerText).filter(Boolean).pop() || '' }))()`, true);
+  }
 }
 
 module.exports = GptObsidianPlugin;
@@ -766,4 +1071,6 @@ module.exports._test = {
   mixColor,
   sanitizeCssColor,
   buildAppearanceScript
+  ,redactBridgeValue
+  ,parsePermissionDecision
 };

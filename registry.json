@@ -94,7 +94,7 @@
     {
       "id": "gpt-obsidian",
       "name": "GPT Obsidian",
-      "version": "1.2.0",
+      "version": "1.2.3",
       "path": "gpt-obsidian"
     }
   ]
