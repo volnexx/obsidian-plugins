@@ -1,0 +1,62 @@
+name: Publish GPT Obsidian 1.2.3
+
+on:
+  push:
+    branches: [centralize-plugins]
+    paths:
+      - '.release/gpt123/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: centralize-plugins
+          fetch-depth: 0
+      - name: Guard
+        run: |
+          if [ ! -f .release/gpt123/READY ]; then
+            echo 'No READY marker; nothing to publish.'
+            exit 0
+          fi
+      - name: Reconstruct tested main.js
+        run: |
+          cat .release/gpt123/main.part1 .release/gpt123/main.part2 | tr -d '\n' | base64 -d | gunzip > gpt-obsidian/main.js
+          node --check gpt-obsidian/main.js
+      - name: Update manifest and registry
+        run: |
+          cat > gpt-obsidian/manifest.json <<'EOF'
+          {
+            "id": "gpt-obsidian",
+            "name": "GPT Obsidian",
+            "version": "1.2.3",
+            "minAppVersion": "1.8.0",
+            "description": "Integrates ChatGPT Web viewer tabs with Obsidian hotkeys, prompt autofocus, theme styling, and Copilot permission bridging.",
+            "author": "volnexx",
+            "isDesktopOnly": true
+          }
+          EOF
+          python3 - <<'PY'
+          import json
+          p='registry.json'
+          data=json.load(open(p, encoding='utf-8'))
+          for plugin in data['plugins']:
+              if plugin['id']=='gpt-obsidian':
+                  plugin['version']='1.2.3'
+                  break
+          else:
+              raise SystemExit('gpt-obsidian missing from registry')
+          open(p,'w',encoding='utf-8').write(json.dumps(data, ensure_ascii=False, indent=2)+'\n')
+          PY
+      - name: Commit release
+        run: |
+          rm -rf .release/gpt123
+          git config user.name 'volnexx'
+          git config user.email 'forscript2575@gmail.com'
+          git add gpt-obsidian/main.js gpt-obsidian/manifest.json registry.json .release/gpt123
+          git commit -m 'Release GPT Obsidian 1.2.3 with working Copilot permission bridge'
+          git push origin HEAD:centralize-plugins
