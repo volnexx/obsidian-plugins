@@ -9,6 +9,7 @@ Small desktop-only companion plugin for ChatGPT tabs opened in Obsidian's core W
 - Returning to an existing ChatGPT tab automatically focuses the prompt field.
 - Visible ChatGPT dialogs and menus block autofocus so the plugin does not steal focus from them.
 - ChatGPT text color can be set to pure white or to Obsidian's current theme text color.
-- Theme text color refreshes automatically when the Obsidian theme or its CSS settings change.
+- The background of user message bubbles and the send button uses the negative/inverted current Obsidian accent color (for example blue -> orange).
+- Theme-derived colors refresh automatically when the Obsidian theme or Style Settings changes.
 - Code blocks keep their own syntax-highlighting colors.
 - Works with ChatGPT tabs opened by Home Tab or by any other method.

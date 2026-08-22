@@ -171,6 +171,47 @@ function isChatGptUrl(value) {
   }
 }
 
+function parseRgb(color) {
+  const value = String(color || "").trim();
+
+  const rgb = value.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+  if (rgb) {
+    return [
+      Math.max(0, Math.min(255, Number(rgb[1]))),
+      Math.max(0, Math.min(255, Number(rgb[2]))),
+      Math.max(0, Math.min(255, Number(rgb[3])))
+    ];
+  }
+
+  const hex6 = value.match(/^#([0-9a-f]{6})$/i);
+  if (hex6) {
+    const n = parseInt(hex6[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  const hex3 = value.match(/^#([0-9a-f]{3})$/i);
+  if (hex3) {
+    return hex3[1].split("").map((x) => parseInt(x + x, 16));
+  }
+
+  return [127, 109, 242];
+}
+
+function rgbString(rgb) {
+  return `rgb(${Math.round(rgb[0])}, ${Math.round(rgb[1])}, ${Math.round(rgb[2])})`;
+}
+
+function invertColor(color) {
+  const [r, g, b] = parseRgb(color);
+  return rgbString([255 - r, 255 - g, 255 - b]);
+}
+
+function mixColor(a, b, amount) {
+  const ca = parseRgb(a);
+  const cb = parseRgb(b);
+  return rgbString(ca.map((v, i) => v * (1 - amount) + cb[i] * amount));
+}
+
 function sanitizeCssColor(value) {
   const color = String(value || "").trim();
   if (!color) return "#ffffff";
@@ -184,16 +225,25 @@ function sanitizeCssColor(value) {
   return "#ffffff";
 }
 
-function buildTextColorScript(color) {
-  const safeColor = sanitizeCssColor(color);
+function buildAppearanceScript(palette) {
+  const textColor = sanitizeCssColor(palette.textColor);
+  const negative = sanitizeCssColor(palette.negative);
+  const negativeHover = sanitizeCssColor(palette.negativeHover);
+
   const css = `
 :root {
-  --gpt-obsidian-text-color: ${safeColor};
-  --text-primary: ${safeColor} !important;
-  --text-secondary: ${safeColor} !important;
-  --text-tertiary: ${safeColor} !important;
-  --text-quaternary: ${safeColor} !important;
-  --text-placeholder: ${safeColor} !important;
+  --gpt-obsidian-text-color: ${textColor};
+  --gpt-obsidian-negative: ${negative};
+  --gpt-obsidian-negative-hover: ${negativeHover};
+
+  --text-primary: ${textColor} !important;
+  --text-secondary: ${textColor} !important;
+  --text-tertiary: ${textColor} !important;
+  --text-quaternary: ${textColor} !important;
+  --text-placeholder: ${textColor} !important;
+
+  --composer-blue-bg: ${negative} !important;
+  --composer-blue-hover: ${negativeHover} !important;
 }
 
 body :where(
@@ -221,10 +271,38 @@ input::placeholder,
   color: var(--gpt-obsidian-text-color) !important;
   opacity: 0.72 !important;
 }
+
+/* User message bubble: replace ChatGPT blue with the negative theme accent. */
+[data-message-author-role="user"] .user-message-bubble-color,
+[data-message-author-role="user"] [class*="user-message-bubble"],
+[data-message-author-role="user"] [class*="bg-token-message-surface"] {
+  background-color: var(--gpt-obsidian-negative) !important;
+}
+
+/* Send button: use the same negative theme accent. */
+button[data-testid="send-button"],
+[data-testid="send-button"] {
+  background-color: var(--gpt-obsidian-negative) !important;
+  border-color: var(--gpt-obsidian-negative) !important;
+  color: var(--gpt-obsidian-text-color) !important;
+}
+
+button[data-testid="send-button"]:hover,
+[data-testid="send-button"]:hover {
+  background-color: var(--gpt-obsidian-negative-hover) !important;
+  border-color: var(--gpt-obsidian-negative-hover) !important;
+}
+
+button[data-testid="send-button"] svg,
+[data-testid="send-button"] svg {
+  color: var(--gpt-obsidian-text-color) !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
 `;
 
   return `(() => {
-    const styleId = "gpt-obsidian-text-color";
+    const styleId = "gpt-obsidian-appearance";
     let style = document.getElementById(styleId);
     if (!style) {
       style = document.createElement("style");
@@ -248,7 +326,7 @@ class GptObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Цвет текста ChatGPT")
-      .setDesc("Выберите белый цвет или основной цвет текста текущей темы Obsidian.")
+      .setDesc("Белый или основной цвет текста текущей темы Obsidian.")
       .addDropdown((dropdown) => {
         dropdown
           .addOption("white", "Белый")
@@ -257,9 +335,13 @@ class GptObsidianSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.textColorMode = value === "white" ? "white" : "theme";
             await this.plugin.saveSettings();
-            await this.plugin.applyTextColorToAllChatGptWebviews();
+            await this.plugin.applyAppearanceToAllChatGptWebviews();
           });
       });
+
+    new Setting(containerEl)
+      .setName("Цвет твоих сообщений и кнопки отправки")
+      .setDesc("Автоматически используется отрицательный цвет акцента темы. Например: голубой → оранжевый.");
   }
 }
 
@@ -287,14 +369,14 @@ class GptObsidianPlugin extends Plugin {
     );
 
     this.registerEvent(
-      this.app.workspace.on("css-change", () => this.scheduleThemeColorRefresh())
+      this.app.workspace.on("css-change", () => this.scheduleThemeRefresh())
     );
 
     this.installThemeObserver();
 
     this.app.workspace.onLayoutReady(() => {
       this.handleActivation();
-      this.applyTextColorToAllChatGptWebviews();
+      this.applyAppearanceToAllChatGptWebviews();
     });
   }
 
@@ -336,7 +418,7 @@ class GptObsidianPlugin extends Plugin {
   installThemeObserver() {
     if (typeof MutationObserver === "undefined") return;
 
-    this.themeObserver = new MutationObserver(() => this.scheduleThemeColorRefresh());
+    this.themeObserver = new MutationObserver(() => this.scheduleThemeRefresh());
     const options = { attributes: true, attributeFilter: ["class", "style"] };
 
     try {
@@ -345,38 +427,87 @@ class GptObsidianPlugin extends Plugin {
     } catch (_) {}
   }
 
-  scheduleThemeColorRefresh() {
-    if (this.settings.textColorMode !== "theme") return;
-
+  scheduleThemeRefresh() {
     if (this.themeRefreshTimer != null) {
       window.clearTimeout(this.themeRefreshTimer);
     }
 
     this.themeRefreshTimer = window.setTimeout(() => {
       this.themeRefreshTimer = null;
-      this.applyTextColorToAllChatGptWebviews();
+      this.applyAppearanceToAllChatGptWebviews();
     }, 80);
   }
 
-  getThemeTextColor() {
+  resolveThemeColor(value, fallback) {
+    const raw = String(value || "").trim();
+    if (!raw) return fallback;
+
+    const host = document.body || document.documentElement;
+    if (!host) return raw || fallback;
+
+    const probe = document.createElement("span");
+    probe.style.position = "fixed";
+    probe.style.pointerEvents = "none";
+    probe.style.opacity = "0";
+    probe.style.color = raw;
+
+    try {
+      host.appendChild(probe);
+      const resolved = window.getComputedStyle(probe).color;
+      probe.remove();
+      return resolved || raw || fallback;
+    } catch (_) {
+      try { probe.remove(); } catch (_) {}
+      return raw || fallback;
+    }
+  }
+
+  getThemePalette() {
     const target = document.body || document.documentElement;
-    if (!target) return "#ffffff";
+    const fallbackAccent = "rgb(59, 130, 246)";
+    const fallbackText = "#ffffff";
+
+    if (!target) {
+      const negative = invertColor(fallbackAccent);
+      return {
+        textColor: this.settings.textColorMode === "white" ? "#ffffff" : fallbackText,
+        negative,
+        negativeHover: mixColor(negative, "#ffffff", 0.12)
+      };
+    }
 
     try {
       const styles = window.getComputedStyle(target);
-      const themeColor = styles.getPropertyValue("--text-normal").trim();
-      if (themeColor) return sanitizeCssColor(themeColor);
-      if (styles.color) return sanitizeCssColor(styles.color);
-    } catch (_) {}
+      const accentRaw =
+        styles.getPropertyValue("--interactive-accent").trim() ||
+        styles.getPropertyValue("--color-accent").trim() ||
+        fallbackAccent;
 
-    return "#ffffff";
+      const textRaw =
+        styles.getPropertyValue("--text-normal").trim() ||
+        styles.color ||
+        fallbackText;
+
+      const accent = this.resolveThemeColor(accentRaw, fallbackAccent);
+      const text = this.resolveThemeColor(textRaw, fallbackText);
+      const negative = invertColor(accent);
+
+      return {
+        textColor: this.settings.textColorMode === "white" ? "#ffffff" : text,
+        negative,
+        negativeHover: mixColor(negative, "#ffffff", 0.12)
+      };
+    } catch (_) {
+      const negative = invertColor(fallbackAccent);
+      return {
+        textColor: this.settings.textColorMode === "white" ? "#ffffff" : fallbackText,
+        negative,
+        negativeHover: mixColor(negative, "#ffffff", 0.12)
+      };
+    }
   }
 
-  getConfiguredTextColor() {
-    return this.settings.textColorMode === "white" ? "#ffffff" : this.getThemeTextColor();
-  }
-
-  async applyTextColorToAllChatGptWebviews() {
+  collectChatGptWebviews() {
     const webviews = new Set(this.boundWebviews.keys());
 
     if (typeof this.app.workspace.iterateAllLeaves === "function") {
@@ -388,21 +519,35 @@ class GptObsidianPlugin extends Plugin {
       } catch (_) {}
     }
 
-    for (const webview of webviews) {
-      if (!this.isChatGptWebview(webview)) continue;
+    try {
+      for (const webview of document.querySelectorAll("webview")) {
+        webviews.add(webview);
+      }
+    } catch (_) {}
+
+    return [...webviews].filter((webview) => this.isChatGptWebview(webview));
+  }
+
+  async applyAppearanceToAllChatGptWebviews() {
+    const palette = this.getThemePalette();
+
+    for (const webview of this.collectChatGptWebviews()) {
       this.bindWebview(webview);
-      await this.applyTextColor(webview);
+      await this.applyAppearance(webview, palette);
     }
   }
 
-  async applyTextColor(webview) {
+  async applyAppearance(webview, palette = null) {
     if (!webview || !this.isChatGptWebview(webview)) return;
     if (typeof webview.executeJavaScript !== "function") return;
 
     try {
-      await webview.executeJavaScript(buildTextColorScript(this.getConfiguredTextColor()), true);
+      await webview.executeJavaScript(
+        buildAppearanceScript(palette || this.getThemePalette()),
+        true
+      );
     } catch (_) {
-      // Navigation may replace the guest document while the style is applied.
+      // Navigation may replace the guest document while styles are applied.
     }
   }
 
@@ -425,7 +570,7 @@ class GptObsidianPlugin extends Plugin {
     if (!webview || !this.isChatGptWebview(webview)) return;
 
     this.bindWebview(webview);
-    this.applyTextColor(webview);
+    this.applyAppearance(webview);
     this.schedulePromptFocus(webview, serial);
   }
 
@@ -433,9 +578,11 @@ class GptObsidianPlugin extends Plugin {
     const view = leaf && leaf.view;
     if (!view) return null;
 
-    if (view.webview && typeof view.webview === "object") return view.webview;
+    for (const candidate of [view.webview, view.webviewEl]) {
+      if (candidate && typeof candidate === "object") return candidate;
+    }
 
-    const root = view.containerEl;
+    const root = view.containerEl || leaf?.containerEl;
     if (root && typeof root.querySelector === "function") {
       return root.querySelector("webview");
     }
@@ -466,7 +613,7 @@ class GptObsidianPlugin extends Plugin {
 
     const domReady = () => {
       this.attachGuestKeyboard(webview);
-      this.applyTextColor(webview);
+      this.applyAppearance(webview);
 
       const activeWebview = this.getWebview(this.app.workspace.activeLeaf);
       if (activeWebview === webview && this.isChatGptWebview(webview)) {
@@ -477,7 +624,7 @@ class GptObsidianPlugin extends Plugin {
     const navigated = () => {
       if (this.isChatGptWebview(webview)) {
         this.attachGuestKeyboard(webview);
-        this.applyTextColor(webview);
+        this.applyAppearance(webview);
       }
     };
 
@@ -592,7 +739,7 @@ class GptObsidianPlugin extends Plugin {
       if (typeof webview.executeJavaScript !== "function") return;
       await webview.executeJavaScript(FOCUS_PROMPT_SCRIPT, true);
     } catch (_) {
-      // A navigation can replace the guest document between activation and execution.
+      // Navigation can replace the guest document between activation and execution.
     }
   }
 
@@ -614,6 +761,9 @@ module.exports._test = {
   hotkeyMatchesInput,
   isPotentialObsidianShortcut,
   isChatGptUrl,
+  parseRgb,
+  invertColor,
+  mixColor,
   sanitizeCssColor,
-  buildTextColorScript
+  buildAppearanceScript
 };
