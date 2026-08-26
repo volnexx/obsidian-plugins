@@ -1,0 +1,757 @@
+/* Rick UI 0.3.0
+   Rebuilt from the supplied Rick interface references.
+   Design goals: luminous glass displays, layered cyan frames, dark lab hardware,
+   red alert capsules, amber markers, segmented controls, and restrained screen texture.
+*/
+
+body.rick-ui {
+  /* Core palette */
+  --rick-void: #000407;
+  --rick-void-2: #020a10;
+  --rick-hardware: #07131d;
+  --rick-hardware-2: #0a1d2b;
+  --rick-screen: rgba(9, 67, 91, .42);
+  --rick-screen-strong: rgba(13, 101, 132, .58);
+  --rick-line: #43e9ff;
+  --rick-line-bright: #b9fbff;
+  --rick-line-soft: rgba(67, 233, 255, .34);
+  --rick-text: #dcfbff;
+  --rick-text-strong: #f2ffff;
+  --rick-muted: #79aeb8;
+  --rick-red: #ff334f;
+  --rick-red-bright: #ff7b88;
+  --rick-amber: #ffc43d;
+  --rick-amber-bright: #ffe48a;
+  --rick-green: #64f23e;
+  --rick-violet: #d05cff;
+
+  --rick-frame: 1px solid color-mix(in srgb, var(--rick-line) 72%, transparent);
+  --rick-frame-soft: 1px solid color-mix(in srgb, var(--rick-line) 31%, transparent);
+  --rick-glow: 0 0 calc(7px * var(--rick-glow-factor)) color-mix(in srgb, var(--rick-line) 34%, transparent),
+               0 0 calc(18px * var(--rick-glow-factor)) color-mix(in srgb, var(--rick-line) 10%, transparent);
+  --rick-inset: inset 0 0 0 1px rgba(255,255,255,.025),
+                inset 0 0 18px color-mix(in srgb, var(--rick-line) 6%, transparent);
+  --rick-cut: polygon(10px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 18px 100%, 0 calc(100% - 18px), 0 10px);
+  --rick-cut-small: polygon(6px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 8px 100%, 0 calc(100% - 8px), 0 6px);
+
+  /* Obsidian variables — compatible with Minimal and default theme */
+  --background-primary: var(--rick-void) !important;
+  --background-primary-alt: #020b11 !important;
+  --background-secondary: #020b11 !important;
+  --background-secondary-alt: #05131d !important;
+  --background-modifier-border: rgba(67,233,255,.24) !important;
+  --background-modifier-border-hover: rgba(67,233,255,.55) !important;
+  --background-modifier-border-focus: var(--rick-line) !important;
+  --background-modifier-hover: rgba(25,139,165,.13) !important;
+  --background-modifier-active-hover: rgba(39,177,204,.19) !important;
+  --background-modifier-form-field: #031219 !important;
+  --background-modifier-form-field-highlighted: #06222c !important;
+  --interactive-normal: #071a23 !important;
+  --interactive-hover: #0a2a36 !important;
+  --interactive-accent: var(--rick-line) !important;
+  --interactive-accent-hover: var(--rick-line-bright) !important;
+  --text-normal: var(--rick-text) !important;
+  --text-muted: var(--rick-muted) !important;
+  --text-faint: #476e78 !important;
+  --text-accent: var(--rick-line-bright) !important;
+  --text-accent-hover: #ffffff !important;
+  --text-on-accent: #001217 !important;
+  --text-error: var(--rick-red-bright) !important;
+  --text-warning: var(--rick-amber-bright) !important;
+  --text-success: #a6ff88 !important;
+  --titlebar-background: #01080c !important;
+  --titlebar-background-focused: #020c12 !important;
+  --divider-color: rgba(67,233,255,.18) !important;
+  --tab-outline-color: rgba(67,233,255,.25) !important;
+  --scrollbar-thumb-bg: #0d5262 !important;
+  --scrollbar-active-thumb-bg: var(--rick-line) !important;
+  --icon-color: #77cbd6 !important;
+  --icon-color-hover: var(--rick-line-bright) !important;
+  --icon-color-active: var(--rick-line-bright) !important;
+  --nav-item-color: #9bcbd2 !important;
+  --nav-item-color-hover: #e7fdff !important;
+  --nav-item-background-hover: rgba(32,153,177,.12) !important;
+  --nav-item-background-active: rgba(32,153,177,.18) !important;
+  --input-shadow: none !important;
+  --input-shadow-hover: none !important;
+  --radius-s: 2px;
+  --radius-m: 3px;
+  --radius-l: 5px;
+  --radius-xl: 7px;
+  --clickable-icon-radius: 2px;
+  color-scheme: dark;
+}
+
+/* Palette variants based on the supplied screens */
+body.rick-ui[data-rick-accent="magenta"] {
+  --rick-screen: rgba(80, 24, 121, .43);
+  --rick-screen-strong: rgba(117, 35, 173, .56);
+  --rick-line: #e956ff;
+  --rick-line-bright: #ffb3ff;
+  --rick-line-soft: rgba(233,86,255,.34);
+}
+body.rick-ui[data-rick-accent="green"] {
+  --rick-screen: rgba(8, 72, 38, .42);
+  --rick-screen-strong: rgba(13, 98, 45, .60);
+  --rick-line: #63f044;
+  --rick-line-bright: #b6ff9d;
+  --rick-line-soft: rgba(99,240,68,.34);
+}
+
+/* Angularity options */
+body.rick-ui[data-rick-sharpness="square"] { --rick-control-clip: none; --rick-control-radius: 0px; }
+body.rick-ui[data-rick-sharpness="soft"] { --rick-control-clip: none; --rick-control-radius: 4px; }
+body.rick-ui[data-rick-sharpness="cut"] { --rick-control-clip: var(--rick-cut-small); --rick-control-radius: 0px; }
+
+/* -------------------------------------------------------------------------
+   STRUCTURE — dark lab hardware around luminous screens
+   ------------------------------------------------------------------------- */
+body.rick-ui .workspace,
+body.rick-ui .workspace-split,
+body.rick-ui .workspace-tabs,
+body.rick-ui .workspace-leaf,
+body.rick-ui .workspace-leaf-content,
+body.rick-ui .view-content {
+  background-color: var(--rick-void) !important;
+}
+
+body.rick-ui .workspace-leaf-content {
+  position: relative;
+  border: 1px solid rgba(67,233,255,.08);
+  box-shadow: inset 0 0 22px rgba(0,0,0,.58);
+}
+
+body.rick-ui .workspace-split.mod-left-split,
+body.rick-ui .workspace-split.mod-right-split {
+  background: linear-gradient(180deg,#05131d,#01070b 72%) !important;
+}
+
+body.rick-ui .workspace-ribbon {
+  background: linear-gradient(180deg,#031018,#01070b) !important;
+  border-color: rgba(67,233,255,.16) !important;
+}
+
+/* A subtle floor-grid language from Rick's lab, kept out of note content */
+body.rick-ui.rick-ui-grid .workspace-split.mod-left-split,
+body.rick-ui.rick-ui-grid .workspace-split.mod-right-split,
+body.rick-ui.rick-ui-grid .workspace-ribbon {
+  background-image:
+    linear-gradient(rgba(67,233,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(67,233,255,.025) 1px, transparent 1px),
+    linear-gradient(180deg,#031018,#01070b 72%) !important;
+  background-size: 26px 26px, 26px 26px, auto;
+}
+
+/* -------------------------------------------------------------------------
+   FLOATING / HOLOGRAPHIC PANELS
+   ------------------------------------------------------------------------- */
+body.rick-ui .modal,
+body.rick-ui .prompt,
+body.rick-ui .menu,
+body.rick-ui .popover,
+body.rick-ui .suggestion-container,
+body.rick-ui .community-modal-info {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, color-mix(in srgb,var(--rick-screen-strong) 70%, #031019 30%), color-mix(in srgb,var(--rick-screen) 58%, #020a0f 42%)) !important;
+  border: 1px solid var(--rick-line) !important;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut);
+  box-shadow: var(--rick-glow), var(--rick-inset) !important;
+  backdrop-filter: blur(8px) saturate(1.12);
+}
+
+/* layered inner frame — recurring in IMG_0350/0354/0357/2410 */
+body.rick-ui .modal::before,
+body.rick-ui .prompt::before,
+body.rick-ui .menu::before,
+body.rick-ui .popover::before,
+body.rick-ui .suggestion-container::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 5px;
+  border: 1px solid color-mix(in srgb,var(--rick-line) 46%,transparent);
+  clip-path: var(--rick-cut);
+  box-shadow: inset 0 0 12px color-mix(in srgb,var(--rick-line) 7%,transparent);
+  z-index: 0;
+}
+body.rick-ui .modal > *,
+body.rick-ui .prompt > *,
+body.rick-ui .menu > *,
+body.rick-ui .popover > *,
+body.rick-ui .suggestion-container > * { position: relative; z-index: 1; }
+
+/* refracted light band, not a permanent CRT scanline */
+body.rick-ui.rick-ui-bloom .modal::after,
+body.rick-ui.rick-ui-bloom .prompt::after,
+body.rick-ui.rick-ui-bloom .popover::after,
+body.rick-ui.rick-ui-bloom .suggestion-container::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 12%;
+  height: 24%;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb,var(--rick-line) 8%,transparent), transparent);
+  opacity: .8;
+  z-index: 0;
+}
+
+/* -------------------------------------------------------------------------
+   HEADERS — label strips embedded into screens
+   ------------------------------------------------------------------------- */
+body.rick-ui.rick-ui-panel-headers .view-header,
+body.rick-ui.rick-ui-panel-headers .modal-title,
+body.rick-ui.rick-ui-panel-headers .vertical-tab-header,
+body.rick-ui.rick-ui-panel-headers .workspace-sidedock-vault-profile {
+  background:
+    linear-gradient(180deg, color-mix(in srgb,var(--rick-screen-strong) 68%, #06151d), #031018) !important;
+  border-bottom: 1px solid color-mix(in srgb,var(--rick-line) 76%,transparent) !important;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,.34), inset 0 1px 0 color-mix(in srgb,var(--rick-line-bright) 20%,transparent) !important;
+}
+
+body.rick-ui.rick-ui-panel-headers .view-header-title,
+body.rick-ui.rick-ui-panel-headers .modal-title,
+body.rick-ui .vertical-tab-header-group-title {
+  color: var(--rick-text-strong) !important;
+  text-transform: uppercase;
+  letter-spacing: .075em;
+  font-weight: 700;
+  text-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 22%,transparent);
+}
+
+body.rick-ui .view-header-title-container::before {
+  content: "";
+  width: 22px;
+  height: 3px;
+  margin-right: 8px;
+  flex: 0 0 auto;
+  background: linear-gradient(90deg,var(--rick-amber) 0 36%,transparent 36% 48%,var(--rick-line) 48% 100%);
+  box-shadow: 0 0 5px color-mix(in srgb,var(--rick-line) 28%,transparent);
+}
+
+/* -------------------------------------------------------------------------
+   TABS — specimen-card / control-bank construction
+   ------------------------------------------------------------------------- */
+body.rick-ui .workspace-tab-header-container {
+  background: #01080c !important;
+  border-bottom: 1px solid rgba(67,233,255,.18) !important;
+}
+body.rick-ui .workspace-tab-header-container-inner {
+  gap: 3px;
+  padding: 4px 5px 0;
+}
+body.rick-ui .workspace-tab-header {
+  position: relative;
+  overflow: hidden;
+  min-height: 31px;
+  color: #73a8b1 !important;
+  background: linear-gradient(180deg,#071b25,#020a0f) !important;
+  border: 1px solid rgba(67,233,255,.22) !important;
+  border-bottom-color: rgba(67,233,255,.12) !important;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut-small);
+  box-shadow: inset 0 1px 0 rgba(188,251,255,.035);
+}
+body.rick-ui .workspace-tab-header:hover {
+  color: var(--rick-text-strong) !important;
+  background: linear-gradient(180deg,#0a2c39,#03121a) !important;
+  border-color: rgba(67,233,255,.48) !important;
+}
+body.rick-ui .workspace-tab-header.is-active {
+  color: #f1ffff !important;
+  background: linear-gradient(180deg,color-mix(in srgb,var(--rick-screen-strong) 72%,#04131b),#031119) !important;
+  border-color: var(--rick-line) !important;
+  box-shadow: inset 0 -3px 0 var(--rick-line), inset 0 0 12px color-mix(in srgb,var(--rick-line) 10%,transparent), 0 0 7px color-mix(in srgb,var(--rick-line) 12%,transparent) !important;
+}
+body.rick-ui.rick-ui-segmented .workspace-tab-header::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 16px;
+  height: 3px;
+  opacity: .64;
+  background: repeating-linear-gradient(90deg,var(--rick-line) 0 3px,transparent 3px 5px);
+}
+
+/* -------------------------------------------------------------------------
+   BUTTONS — display controls, not generic neon rectangles
+   ------------------------------------------------------------------------- */
+body.rick-ui button,
+body.rick-ui .mod-cta,
+body.rick-ui .modal-button-container button {
+  position: relative;
+  overflow: hidden;
+  min-height: 30px;
+  padding-inline: 13px;
+  border-radius: var(--rick-control-radius) !important;
+  clip-path: var(--rick-control-clip);
+  background: linear-gradient(180deg,#0b3847,#061822) !important;
+  border: 1px solid color-mix(in srgb,var(--rick-line) 72%,#08232b) !important;
+  color: var(--rick-text-strong) !important;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .055em;
+  text-shadow: 0 0 5px color-mix(in srgb,var(--rick-line) 18%,transparent);
+  box-shadow: inset 0 1px 0 rgba(196,253,255,.12), inset 0 -2px 0 rgba(0,0,0,.46), 0 0 5px color-mix(in srgb,var(--rick-line) 9%,transparent) !important;
+  transition: background .10s linear, border-color .10s linear, box-shadow .10s linear, transform .06s linear;
+}
+body.rick-ui button:hover,
+body.rick-ui .mod-cta:hover {
+  background: linear-gradient(180deg,color-mix(in srgb,var(--rick-line) 27%,#0b3847),#08242e) !important;
+  border-color: var(--rick-line-bright) !important;
+  box-shadow: 0 0 8px color-mix(in srgb,var(--rick-line) 22%,transparent), inset 0 0 12px color-mix(in srgb,var(--rick-line) 8%,transparent) !important;
+}
+body.rick-ui button:active,
+body.rick-ui .mod-cta:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 9px rgba(0,0,0,.72) !important;
+}
+
+/* segmented underbar resembles IMG_0353 sliders / console controls */
+body.rick-ui.rick-ui-segmented button::after,
+body.rick-ui.rick-ui-segmented .mod-cta::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 3px;
+  height: 2px;
+  opacity: .74;
+  background: repeating-linear-gradient(90deg,var(--rick-line) 0 8px,transparent 8px 11px);
+}
+
+/* Destructive controls are Rick-like red alert capsules */
+body.rick-ui.rick-ui-hazards button.mod-warning,
+body.rick-ui.rick-ui-hazards button.mod-destructive,
+body.rick-ui.rick-ui-hazards .mod-warning,
+body.rick-ui.rick-ui-hazards .mod-destructive {
+  background: linear-gradient(180deg,#c31b31,#68111f) !important;
+  border: 1px solid var(--rick-red-bright) !important;
+  color: #fff1ee !important;
+  clip-path: none;
+  border-radius: 8px !important;
+  box-shadow: 0 0 9px rgba(255,51,79,.28), inset 0 0 0 1px rgba(255,225,215,.15) !important;
+}
+body.rick-ui.rick-ui-hazards button.mod-warning::before,
+body.rick-ui.rick-ui-hazards button.mod-destructive::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  border: 1px solid rgba(255,180,180,.26);
+  border-radius: 5px;
+  background-image: linear-gradient(rgba(255,220,220,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(255,220,220,.08) 1px,transparent 1px);
+  background-size: 9px 9px;
+}
+body.rick-ui.rick-ui-hazards button.mod-warning::after,
+body.rick-ui.rick-ui-hazards button.mod-destructive::after {
+  background: repeating-linear-gradient(90deg,var(--rick-amber) 0 7px,transparent 7px 10px);
+}
+
+/* Primary action gets an amber status marker, like physical console buttons */
+body.rick-ui button.mod-cta:not(.mod-warning):not(.mod-destructive)::before {
+  content: "";
+  position: absolute;
+  width: 4px;
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  background: var(--rick-amber);
+  box-shadow: 0 0 5px rgba(255,196,61,.55);
+  pointer-events: none;
+}
+
+/* -------------------------------------------------------------------------
+   FORM FIELDS — embedded dark displays
+   ------------------------------------------------------------------------- */
+body.rick-ui input[type="text"],
+body.rick-ui input[type="search"],
+body.rick-ui input[type="number"],
+body.rick-ui textarea,
+body.rick-ui select,
+body.rick-ui .dropdown {
+  border-radius: var(--rick-control-radius) !important;
+  clip-path: var(--rick-control-clip);
+  background:
+    linear-gradient(180deg,rgba(27,145,169,.08),transparent 48%),
+    #031219 !important;
+  border: 1px solid rgba(67,233,255,.42) !important;
+  color: var(--rick-text-strong) !important;
+  box-shadow: inset 0 0 14px rgba(67,233,255,.035) !important;
+}
+body.rick-ui input:focus,
+body.rick-ui textarea:focus,
+body.rick-ui select:focus {
+  border-color: var(--rick-line) !important;
+  box-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 19%,transparent), inset 0 0 13px color-mix(in srgb,var(--rick-line) 6%,transparent) !important;
+}
+body.rick-ui input::placeholder,
+body.rick-ui textarea::placeholder { color: #5a8b95 !important; }
+
+/* Command palette / search becomes a large cyan screen */
+body.rick-ui .prompt-input-container {
+  padding: 10px 11px 9px;
+  background: linear-gradient(180deg,color-mix(in srgb,var(--rick-line) 18%,#05202a),#031017) !important;
+  border-bottom: 1px solid color-mix(in srgb,var(--rick-line) 72%,transparent) !important;
+}
+body.rick-ui .prompt-input {
+  min-height: 42px;
+  font-weight: 650;
+  letter-spacing: .025em;
+}
+body.rick-ui .suggestion-item {
+  position: relative;
+  margin: 2px 7px;
+  border: 1px solid transparent;
+  clip-path: var(--rick-cut-small);
+}
+body.rick-ui .suggestion-item.is-selected {
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 18%,#07303b),#061921 70%) !important;
+  border-color: rgba(67,233,255,.55) !important;
+  box-shadow: inset 3px 0 0 var(--rick-line) !important;
+}
+
+/* -------------------------------------------------------------------------
+   FILE EXPLORER / NAVIGATION
+   ------------------------------------------------------------------------- */
+body.rick-ui .nav-file-title,
+body.rick-ui .nav-folder-title {
+  position: relative;
+  min-height: 25px;
+  margin: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut-small);
+}
+body.rick-ui .nav-file-title:hover,
+body.rick-ui .nav-folder-title:hover {
+  border-color: rgba(67,233,255,.20);
+}
+body.rick-ui .nav-file-title.is-active {
+  color: #efffff !important;
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 16%,#061a22),#041219 75%) !important;
+  border-color: rgba(67,233,255,.58) !important;
+  box-shadow: inset 3px 0 0 var(--rick-line), inset 0 0 11px color-mix(in srgb,var(--rick-line) 5%,transparent) !important;
+}
+body.rick-ui .nav-folder-title-content {
+  text-transform: uppercase;
+  letter-spacing: .035em;
+  font-size: .92em;
+}
+body.rick-ui .nav-folder-collapse-indicator {
+  color: var(--rick-line) !important;
+  filter: drop-shadow(0 0 2px color-mix(in srgb,var(--rick-line) 24%,transparent));
+}
+
+/* Ribbon icons become small hardware keys */
+body.rick-ui .workspace-ribbon .clickable-icon,
+body.rick-ui .side-dock-actions .clickable-icon,
+body.rick-ui .view-actions .clickable-icon {
+  border: 1px solid transparent;
+  border-radius: 2px !important;
+}
+body.rick-ui .workspace-ribbon .clickable-icon:hover,
+body.rick-ui .side-dock-actions .clickable-icon:hover,
+body.rick-ui .view-actions .clickable-icon:hover {
+  background: rgba(31,151,174,.14) !important;
+  border-color: rgba(67,233,255,.43);
+  box-shadow: inset 0 0 8px rgba(67,233,255,.055),0 0 5px rgba(67,233,255,.08);
+}
+
+/* -------------------------------------------------------------------------
+   SETTINGS — console rows and instrument switches
+   ------------------------------------------------------------------------- */
+body.rick-ui .vertical-tab-content-container,
+body.rick-ui .vertical-tab-header {
+  background: #020a0f !important;
+}
+body.rick-ui .vertical-tab-nav-item {
+  border: 1px solid transparent;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut-small);
+}
+body.rick-ui .vertical-tab-nav-item.is-active {
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 17%,#061a22),#041219) !important;
+  border-color: rgba(67,233,255,.42) !important;
+  color: #efffff !important;
+  box-shadow: inset 3px 0 0 var(--rick-line) !important;
+}
+body.rick-ui .setting-item {
+  margin: 0;
+  padding: 13px 10px;
+  border-top: 1px solid rgba(67,233,255,.12) !important;
+  border-bottom: 1px solid rgba(0,0,0,.62) !important;
+}
+body.rick-ui .setting-item:hover {
+  background: linear-gradient(90deg,rgba(67,233,255,.033),transparent 56%) !important;
+}
+body.rick-ui .setting-item-name { color: #e2fcff !important; }
+body.rick-ui .setting-item-description { color: #76a9b2 !important; }
+
+/* Toggle = compact illuminated module */
+body.rick-ui .checkbox-container {
+  width: 44px !important;
+  height: 22px !important;
+  padding: 2px !important;
+  border: 1px solid rgba(67,233,255,.40) !important;
+  border-radius: 2px !important;
+  background: #031219 !important;
+  box-shadow: inset 0 0 8px rgba(67,233,255,.04) !important;
+}
+body.rick-ui .checkbox-container::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: 5px;
+  width: 15px;
+  height: 2px;
+  background: repeating-linear-gradient(90deg,#4e7d85 0 3px,transparent 3px 5px);
+  opacity: .45;
+}
+body.rick-ui .checkbox-container::after {
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 1px !important;
+  background: #5d8188 !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12),0 0 4px rgba(0,0,0,.55) !important;
+}
+body.rick-ui .checkbox-container.is-enabled {
+  background: color-mix(in srgb,var(--rick-line) 16%,#031219) !important;
+  border-color: var(--rick-line) !important;
+  box-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 16%,transparent),inset 0 0 10px color-mix(in srgb,var(--rick-line) 7%,transparent) !important;
+}
+body.rick-ui .checkbox-container.is-enabled::after {
+  background: var(--rick-line-bright) !important;
+  box-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 55%,transparent) !important;
+}
+
+/* Slider ticks from IMG_0353 */
+body.rick-ui input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  min-width: 120px;
+  background: transparent !important;
+  border: 0 !important;
+}
+body.rick-ui input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 1px solid rgba(67,233,255,.30);
+  background: repeating-linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 70%,transparent) 0 5px,transparent 5px 8px),#031219;
+  box-shadow: inset 0 0 7px rgba(67,233,255,.06);
+}
+body.rick-ui input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 8px;
+  height: 16px;
+  margin-top: -5px;
+  border: 1px solid var(--rick-line-bright);
+  border-radius: 3px;
+  background: var(--rick-line);
+  box-shadow: 0 0 7px color-mix(in srgb,var(--rick-line) 48%,transparent);
+}
+
+/* Progress bars: diagonal system activity, from IMG_2410 */
+body.rick-ui progress {
+  overflow: hidden;
+  height: 12px;
+  border: 1px solid color-mix(in srgb,var(--rick-line) 62%,transparent);
+  border-radius: 0;
+  background: #03120f;
+}
+body.rick-ui progress::-webkit-progress-bar { background: #03120f; }
+body.rick-ui progress::-webkit-progress-value {
+  background: repeating-linear-gradient(135deg,var(--rick-line) 0 8px,color-mix(in srgb,var(--rick-line) 28%,#03120f) 8px 15px);
+}
+
+/* -------------------------------------------------------------------------
+   MENUS / NOTICES / TOOLTIPS
+   ------------------------------------------------------------------------- */
+body.rick-ui .menu-item {
+  border-left: 2px solid transparent;
+}
+body.rick-ui .menu-item:hover {
+  background: linear-gradient(90deg,color-mix(in srgb,var(--rick-line) 15%,#08242d),transparent) !important;
+  border-left-color: var(--rick-line);
+}
+body.rick-ui .notice {
+  background: linear-gradient(180deg,#0a2619,#04110b) !important;
+  border: 1px solid var(--rick-green) !important;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut-small);
+  color: #dfffd2 !important;
+  box-shadow: 0 0 8px rgba(100,242,62,.16),inset 0 0 12px rgba(100,242,62,.05) !important;
+}
+body.rick-ui .tooltip {
+  background: #03151c !important;
+  border: 1px solid rgba(67,233,255,.60) !important;
+  border-radius: 1px !important;
+  color: #e5fdff !important;
+  box-shadow: 0 0 7px rgba(67,233,255,.13) !important;
+}
+
+/* -------------------------------------------------------------------------
+   EDITOR — readable black canvas, Rick chrome stays around it
+   ------------------------------------------------------------------------- */
+body.rick-ui .markdown-source-view,
+body.rick-ui .markdown-reading-view {
+  background: #000406 !important;
+}
+body.rick-ui .cm-gutters {
+  background: #020b10 !important;
+  border-right: 1px solid rgba(67,233,255,.17) !important;
+  color: #3f6871 !important;
+}
+body.rick-ui .cm-activeLine { background: rgba(32,130,149,.075) !important; }
+body.rick-ui .cm-activeLineGutter { background:#06202a !important; color:var(--rick-line-bright) !important; }
+body.rick-ui .cm-cursor { border-left-color:var(--rick-line-bright) !important; }
+body.rick-ui .cm-selectionBackground,
+body.rick-ui ::selection { background: color-mix(in srgb,var(--rick-line) 26%,transparent) !important; }
+body.rick-ui a,
+body.rick-ui .cm-hmd-internal-link,
+body.rick-ui .internal-link {
+  color: var(--rick-line-bright) !important;
+  text-decoration-color: color-mix(in srgb,var(--rick-line) 46%,transparent) !important;
+}
+
+/* Headings: tiny readout marker, no forced sci-fi font */
+body.rick-ui .markdown-rendered h1,
+body.rick-ui .markdown-rendered h2,
+body.rick-ui .markdown-rendered h3 {
+  text-shadow: 0 0 7px rgba(67,233,255,.055);
+}
+body.rick-ui .markdown-rendered hr {
+  border: 0;
+  height: 3px;
+  background: repeating-linear-gradient(90deg,var(--rick-line) 0 18px,transparent 18px 24px);
+  opacity: .42;
+}
+
+/* Callouts as inset instrument cards */
+body.rick-ui .callout {
+  border: 1px solid color-mix(in srgb,rgb(var(--callout-color)) 60%,transparent) !important;
+  border-radius: 0 !important;
+  clip-path: var(--rick-cut-small);
+  background: color-mix(in srgb,rgb(var(--callout-color)) 7%,#02090d) !important;
+}
+body.rick-ui .callout-title {
+  border-bottom: 1px solid color-mix(in srgb,rgb(var(--callout-color)) 25%,transparent);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* -------------------------------------------------------------------------
+   STATUS BAR — machine readout
+   ------------------------------------------------------------------------- */
+body.rick-ui .status-bar {
+  background: linear-gradient(180deg,#04131a,#01080c) !important;
+  border: 1px solid rgba(67,233,255,.32) !important;
+  border-radius: 0 !important;
+  clip-path: polygon(7px 0,100% 0,100% 100%,7px 100%,0 calc(100% - 7px),0 7px);
+  color:#75b6c0 !important;
+  box-shadow:0 0 7px rgba(67,233,255,.07) !important;
+  font-variant-numeric: tabular-nums;
+}
+body.rick-ui .status-bar::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  background: var(--rick-green);
+  border: 1px solid #c3ffb4;
+  box-shadow: 0 0 7px rgba(100,242,62,.64);
+  margin-right: 5px;
+}
+body.rick-ui .status-bar-item {
+  border-left: 1px solid rgba(67,233,255,.18);
+  padding-left: 7px;
+  margin-left: 2px;
+}
+
+/* -------------------------------------------------------------------------
+   SCREEN TEXTURE — optional and deliberately local/subtle
+   ------------------------------------------------------------------------- */
+body.rick-ui.rick-ui-scanlines .modal::before,
+body.rick-ui.rick-ui-scanlines .prompt::before,
+body.rick-ui.rick-ui-scanlines .popover::before,
+body.rick-ui.rick-ui-scanlines .menu::before,
+body.rick-ui.rick-ui-scanlines .suggestion-container::before {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(210,254,255,.016) 0,
+    rgba(210,254,255,.016) 1px,
+    rgba(0,0,0,.045) 1px,
+    rgba(0,0,0,.045) 4px
+  );
+}
+
+
+/* Corner brackets around large content panels — holographic frame language */
+body.rick-ui.rick-ui-panel-headers .view-content {
+  position: relative;
+}
+body.rick-ui.rick-ui-panel-headers .view-content::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 7px;
+  z-index: 5;
+  opacity: .34;
+  background:
+    linear-gradient(var(--rick-line),var(--rick-line)) left top/34px 1px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) left top/1px 34px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) right top/34px 1px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) right top/1px 34px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) left bottom/34px 1px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) left bottom/1px 34px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) right bottom/34px 1px no-repeat,
+    linear-gradient(var(--rick-line),var(--rick-line)) right bottom/1px 34px no-repeat;
+}
+
+/* -------------------------------------------------------------------------
+   ANIMATION — slow electronic pulse / hologram sweep
+   ------------------------------------------------------------------------- */
+@keyframes rick-status-pulse {
+  0%,100% { opacity:.58; filter:brightness(.92); }
+  50% { opacity:1; filter:brightness(1.25); }
+}
+@keyframes rick-holo-sweep {
+  from { transform: translateY(-180%); opacity:0; }
+  18% { opacity:.42; }
+  55% { opacity:.15; }
+  to { transform: translateY(520%); opacity:0; }
+}
+body.rick-ui.rick-ui-animate .status-bar::before {
+  animation: rick-status-pulse 2.4s steps(2,end) infinite;
+}
+body.rick-ui.rick-ui-animate.rick-ui-bloom .prompt::after,
+body.rick-ui.rick-ui-animate.rick-ui-bloom .modal::after {
+  animation: rick-holo-sweep 8s linear infinite;
+}
+
+/* -------------------------------------------------------------------------
+   MOBILE — keep frames but reduce visual overhead
+   ------------------------------------------------------------------------- */
+body.is-mobile.rick-ui .modal,
+body.is-mobile.rick-ui .prompt,
+body.is-mobile.rick-ui .menu,
+body.is-mobile.rick-ui .popover,
+body.is-mobile.rick-ui .suggestion-container {
+  backdrop-filter: none;
+}
+body.is-mobile.rick-ui.rick-ui-panel-headers .view-content::after { opacity:.20; }
+body.is-mobile.rick-ui .workspace-tab-header { clip-path:none; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.rick-ui.rick-ui-animate * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

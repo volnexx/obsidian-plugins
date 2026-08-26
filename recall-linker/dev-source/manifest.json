@@ -1,0 +1,9 @@
+{
+  "id": "recall-linker",
+  "name": "Ссылки повторения",
+  "version": "1.0.0",
+  "minAppVersion": "1.8.0",
+  "description": "Добавляет значки ссылок для заметок, псевдонимов и карточек повторения.",
+  "author": "Valentin Schröter; папочка",
+  "isDesktopOnly": false
+}

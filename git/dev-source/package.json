@@ -1,0 +1,35 @@
+{
+  "name": "git",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-repository Git development environment for Obsidian",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "typecheck": "npm run typecheck:source && npm run typecheck:tests && npm run typecheck:invariants",
+    "typecheck:source": "tsc --noEmit -p tsconfig.json",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
+    "typecheck:invariants": "tsc --noEmit -p tsconfig.type-tests.json",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" vitest.config.ts --max-warnings=0",
+    "test": "npm run test:unit && npm run test:architecture",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:safety": "vitest run tests/safety-integration",
+    "test:architecture": "npm run dependency:test && vitest run tests/architecture && npm run typecheck:invariants",
+    "dependency:test": "depcruise src --config .dependency-cruiser.cjs --output-type err-long",
+    "build": "npm run typecheck:source && node esbuild.config.mjs production",
+    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:architecture && npm run test:integration && npm run test:safety && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.2.0",
+    "dependency-cruiser": "18.2.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.9.0",
+    "globals": "17.11.0",
+    "obsidian": "1.13.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.11"
+  }
+}

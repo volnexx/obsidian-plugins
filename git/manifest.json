@@ -1,0 +1,10 @@
+{
+  "id": "git",
+  "name": "Git",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.0",
+  "description": "Multi-repository Git development environment for Obsidian.",
+  "author": "mcmarkus",
+  "isDesktopOnly": true
+}
+

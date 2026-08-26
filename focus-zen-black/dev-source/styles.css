@@ -1,0 +1,174 @@
+body.focus-zen-black-active {
+  --focus-zen-black-editor-width: min(760px, calc(100vw - 96px));
+  --focus-zen-black-muted-line-opacity: 0.28;
+  --focus-zen-black-focus-padding: max(36vh, calc(50vh - 1.2em));
+  --focus-zen-black-bg: #000000;
+  background: #000000;
+}
+
+body.focus-zen-black-active .workspace-ribbon,
+body.focus-zen-black-active .mod-left-split,
+body.focus-zen-black-active .mod-right-split,
+body.focus-zen-black-active .status-bar {
+  display: none;
+}
+
+body.focus-zen-black-active .titlebar-button-container.mod-right,
+body.focus-zen-black-active .titlebar-button-container.mod-right .titlebar-button,
+body.focus-zen-black-active .titlebar-button.mod-minimize,
+body.focus-zen-black-active .titlebar-button.mod-maximize,
+body.focus-zen-black-active .titlebar-button.mod-close {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+body.focus-zen-black-active .workspace-tab-header-container,
+body.focus-zen-black-active .view-header {
+  border: 0;
+  height: 0;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+body.focus-zen-black-active .workspace,
+body.focus-zen-black-active .workspace-split.mod-root,
+body.focus-zen-black-active .workspace-tabs,
+body.focus-zen-black-active .workspace-leaf,
+body.focus-zen-black-active .workspace-leaf-content,
+body.focus-zen-black-active .view-content {
+  background: var(--focus-zen-black-bg);
+}
+
+body.focus-zen-black-active .workspace-split.mod-root .workspace-tabs:not(.focus-zen-black-target-tabs),
+body.focus-zen-black-active .workspace-split.mod-root .workspace-leaf:not(.focus-zen-black-target-leaf) {
+  display: none;
+}
+
+body.focus-zen-black-active .workspace-split.mod-root,
+body.focus-zen-black-active .workspace-split.mod-root .focus-zen-black-target-tabs,
+body.focus-zen-black-active .workspace-split.mod-root .focus-zen-black-target-leaf,
+body.focus-zen-black-active .focus-zen-black-target-view,
+body.focus-zen-black-active .focus-zen-black-target-view .view-content,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view,
+body.focus-zen-black-active .focus-zen-black-target-view .cm-editor {
+  flex: 1 1 auto;
+  height: 100%;
+  max-height: none;
+  max-width: none;
+  width: 100%;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .view-content {
+  overflow: hidden;
+  padding: 0;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 {
+  --file-line-width: var(--focus-zen-black-editor-width);
+  --line-width: var(--focus-zen-black-editor-width);
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-editor {
+  background: var(--focus-zen-black-bg);
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-scroller {
+  font-size: 1.08em;
+  line-height: 1.75;
+  overflow-x: hidden;
+  scroll-padding-bottom: 45vh;
+  scroll-padding-top: 45vh;
+  scrollbar-width: none;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-scroller::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-gutters {
+  display: none;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-sizer,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-contentContainer,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-content,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line {
+  box-sizing: border-box;
+  max-width: var(--focus-zen-black-editor-width);
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-sizer,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-contentContainer,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-content {
+  margin-left: auto;
+  margin-right: auto;
+  width: var(--focus-zen-black-editor-width);
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-sizer {
+  min-width: 0;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-content {
+  min-height: 100%;
+  padding-bottom: var(--focus-zen-black-focus-padding);
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: var(--focus-zen-black-focus-padding);
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line {
+  opacity: var(--focus-zen-black-muted-line-opacity);
+  transition: opacity 120ms ease;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.focus-zen-black-current-line,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-active,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-activeLine {
+  background: #000000 !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  opacity: 1;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.focus-zen-black-current-line::before,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.focus-zen-black-current-line::after,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-active::before,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-active::after,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-activeLine::before,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-line.cm-activeLine::after {
+  background: #000000 !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-cursorLayer,
+body.focus-zen-black-active .focus-zen-black-target-view .markdown-source-view.mod-cm6 .cm-selectionLayer {
+  opacity: 1;
+}
+
+body.focus-zen-black-active .rsp-role-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 100000;
+}
+
+.focus-zen-black-ribbon-button.is-active {
+  color: var(--interactive-accent);
+}
+
+.focus-zen-black-opacity-value {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  min-width: 3em;
+  text-align: right;
+}

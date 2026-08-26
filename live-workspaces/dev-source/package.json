@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-live-workspaces",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test:switcher": "node scripts/test-switcher.mjs",
+    "verify:safety": "node scripts/verify-safety.mjs",
+    "verify": "npm run verify:safety && npm run test:switcher && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.13.0",
+    "typescript": "^5.7.0"
+  }
+}

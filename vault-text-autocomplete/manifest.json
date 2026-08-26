@@ -1,0 +1,10 @@
+{
+  "id": "vault-text-autocomplete",
+  "name": "Автодополнение текста по хранилищу",
+  "version": "1.0.0",
+  "minAppVersion": "1.11.4",
+  "description": "Показывает варианты продолжения слов из заметки и хранилища, не перехватывая клавиатуру",
+  "author": "Tadashi Aikawa (original), custom fork",
+  "authorUrl": "https://github.com/tadashi-aikawa",
+  "isDesktopOnly": false
+}

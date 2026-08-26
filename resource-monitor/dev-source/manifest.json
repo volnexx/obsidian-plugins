@@ -1,0 +1,10 @@
+{
+  "id": "memory-monitor-ru",
+  "name": "Монитор ресурсов",
+  "version": "1.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Графики ОЗУ, ЦП, видеокарты и SSD, а также приблизительная разбивка JavaScript-памяти по дополнениям.",
+  "author": "volnexx",
+  "authorUrl": "https://github.com/volnexx",
+  "isDesktopOnly": true
+}

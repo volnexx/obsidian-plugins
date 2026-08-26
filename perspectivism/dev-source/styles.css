@@ -1,0 +1,647 @@
+.perspectivism-panel {
+  padding: 12px;
+}
+
+.perspectivism-panel-header {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  margin: 2px 0 14px;
+  min-height: 34px;
+}
+
+.perspectivism-panel-header h4 {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.perspectivism-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.perspectivism-review-open {
+  margin: 0 0 12px;
+  width: 100%;
+}
+
+.perspectivism-order-switch {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  cursor: pointer;
+  display: flex;
+  height: 22px;
+  justify-content: center;
+  margin: 0 0 12px auto;
+  min-height: 0;
+  padding: 0;
+  position: relative;
+  width: 38px;
+}
+
+.perspectivism-order-switch:hover,
+.perspectivism-order-switch:focus-visible {
+  background: transparent;
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  outline: none;
+}
+
+.perspectivism-toggle {
+  align-items: center;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  justify-content: space-between;
+  isolation: isolate;
+  min-height: 40px;
+  overflow: hidden;
+  padding: 7px 9px 7px 11px;
+  position: relative;
+  text-align: left;
+  transition:
+    background-color 180ms cubic-bezier(0.5, 1, 0.89, 1),
+    border-color 180ms cubic-bezier(0.5, 1, 0.89, 1);
+  width: 100%;
+}
+
+.perspectivism-toggle:hover {
+  background: var(--background-modifier-hover);
+}
+
+.perspectivism-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  outline: none;
+}
+
+.perspectivism-toggle.is-enabled {
+  background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-secondary));
+  border-color: var(--interactive-accent);
+}
+
+.perspectivism-toggle::before {
+  background: radial-gradient(
+    circle at center,
+    color-mix(in srgb, var(--interactive-accent) 12%, transparent),
+    transparent 78%
+  );
+  content: "";
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  transition: opacity 800ms cubic-bezier(0.5, 1, 0.89, 1);
+  z-index: 0;
+}
+
+.perspectivism-toggle:hover::before,
+.perspectivism-toggle:focus-visible::before {
+  opacity: 1;
+}
+
+.perspectivism-pixel-canvas {
+  display: block;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+.perspectivism-toggle-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-right: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.perspectivism-toggle-actions {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.perspectivism-line-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: right;
+}
+
+.perspectivism-toggle.is-enabled .perspectivism-line-count {
+  color: var(--text-normal);
+}
+
+.perspectivism-toggle-track {
+  background: var(--background-modifier-border-hover);
+  border-radius: 999px;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 22px;
+  position: relative;
+  transition: background-color 140ms ease;
+  width: 38px;
+  z-index: 1;
+}
+
+.perspectivism-toggle-knob {
+  background: var(--text-on-accent);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 28%);
+  display: block;
+  height: 18px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: left 140ms ease;
+  width: 18px;
+}
+
+.perspectivism-toggle.is-enabled .perspectivism-toggle-track {
+  background: var(--interactive-accent);
+}
+
+.perspectivism-order-switch.is-enabled .perspectivism-toggle-track {
+  background: var(--interactive-accent);
+}
+
+.perspectivism-toggle.is-enabled .perspectivism-toggle-knob {
+  left: 18px;
+}
+
+.perspectivism-order-switch.is-enabled .perspectivism-toggle-knob {
+  left: 18px;
+}
+
+.perspectivism-logic {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin: 0;
+}
+
+.perspectivism-logic-button {
+  align-items: center;
+  appearance: none;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-grid;
+  font-family: var(--font-monospace);
+  font-size: 18px;
+  font-weight: 600;
+  height: 30px;
+  line-height: 1;
+  min-height: 30px;
+  min-width: 30px;
+  padding: 0;
+  place-items: center;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+  width: 30px;
+}
+
+.perspectivism-review-search {
+  display: block;
+  margin: 0 0 4px;
+  width: 100%;
+}
+
+.perspectivism-review-direction-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.perspectivism-review-mobile-skip {
+  display: block;
+  font-size: 23px;
+  height: 44px;
+  margin: 12px auto 0;
+  padding: 0;
+  width: 52px;
+}
+
+.perspectivism-logic-button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.perspectivism-logic-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  outline: none;
+}
+
+.perspectivism-logic-button.is-enabled {
+  background: color-mix(
+    in srgb,
+    var(--interactive-accent) 18%,
+    var(--background-secondary)
+  );
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.perspectivism-empty,
+.perspectivism-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.45;
+}
+
+.perspectivism-hint {
+  margin-top: 12px;
+}
+
+.perspectivism-example {
+  background: var(--background-secondary);
+  border-radius: 8px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  overflow-x: auto;
+  padding: 10px;
+}
+
+.perspectivism-excluded-notes {
+  min-height: 180px;
+  resize: vertical;
+  width: min(100%, 420px);
+}
+
+.perspectivism-review-modal {
+  max-width: min(720px, calc(100vw - 28px));
+  width: 720px;
+}
+
+.perspectivism-review-content {
+  outline: none;
+  overflow: hidden;
+  padding: 4px 4px 8px;
+}
+
+.perspectivism-review-content h2 {
+  margin: 2px 0 16px;
+}
+
+.perspectivism-review-lead,
+.perspectivism-review-selection-count,
+.perspectivism-review-progress,
+.perspectivism-review-finished-count {
+  color: var(--text-muted);
+}
+
+.perspectivism-review-picker,
+.perspectivism-review-multiple-perspectives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.perspectivism-review-perspective {
+  align-items: center;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-normal);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 8px;
+  justify-content: center;
+  min-height: 36px;
+  padding: 7px 14px;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.perspectivism-review-perspective:hover {
+  transform: translateY(-1px);
+}
+
+.perspectivism-review-perspective.is-enabled {
+  background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-secondary));
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.perspectivism-review-perspective.is-prioritized {
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.perspectivism-review-perspective-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.perspectivism-review-priority-direction {
+  align-items: center;
+  background: var(--interactive-accent);
+  border-radius: 999px;
+  color: var(--text-on-accent);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 16px;
+  height: 22px;
+  justify-content: center;
+  line-height: 1;
+  width: 22px;
+}
+
+.perspectivism-review-perspective.is-existing:disabled {
+  cursor: default;
+  opacity: 0.65;
+  transform: none;
+}
+
+.perspectivism-review-skip-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 20px;
+  min-height: 32px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.perspectivism-review-skip-option:hover,
+.perspectivism-review-skip-option:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  outline: none;
+}
+
+.perspectivism-review-skip-option:focus-visible .perspectivism-review-skip-track {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.perspectivism-review-skip-label {
+  line-height: 1.35;
+}
+
+.perspectivism-review-skip-track {
+  background: var(--background-modifier-border-hover);
+  border-radius: 999px;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 22px;
+  position: relative;
+  transition: background-color 140ms ease;
+  width: 38px;
+}
+
+.perspectivism-review-skip-knob {
+  background: var(--text-on-accent);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 28%);
+  display: block;
+  height: 18px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: left 140ms ease;
+  width: 18px;
+}
+
+.perspectivism-review-skip-option.is-enabled {
+  color: var(--text-normal);
+}
+
+.perspectivism-review-skip-option.is-enabled .perspectivism-review-skip-track {
+  background: var(--interactive-accent);
+}
+
+.perspectivism-review-skip-option.is-enabled .perspectivism-review-skip-knob {
+  left: 18px;
+}
+
+.perspectivism-review-picker-footer {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 22px;
+}
+
+.perspectivism-review-start,
+.perspectivism-review-apply,
+.perspectivism-review-close {
+  min-width: 128px;
+}
+
+.perspectivism-review-header {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+}
+
+.perspectivism-review-header h2 {
+  margin-bottom: 12px;
+}
+
+.perspectivism-review-progress {
+  font-variant-numeric: tabular-nums;
+}
+
+.perspectivism-review-card {
+  align-items: center;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 18%);
+  cursor: grab;
+  display: flex;
+  justify-content: center;
+  min-height: 230px;
+  padding: 28px;
+  position: relative;
+  touch-action: none;
+  transition:
+    transform 150ms ease,
+    opacity 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+  user-select: none;
+  will-change: transform;
+}
+
+.perspectivism-review-card:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus),
+    0 12px 36px rgb(0 0 0 / 18%);
+  outline: none;
+}
+
+.perspectivism-review-card.is-dragging {
+  cursor: grabbing;
+  transition: border-color 100ms ease, background-color 100ms ease;
+}
+
+.perspectivism-review-card.is-left {
+  background: color-mix(in srgb, var(--color-red) 10%, var(--background-secondary));
+  border-color: var(--color-red);
+}
+
+.perspectivism-review-card.is-right {
+  background: color-mix(in srgb, var(--color-green) 10%, var(--background-secondary));
+  border-color: var(--color-green);
+}
+
+.perspectivism-review-card.is-exiting-left {
+  opacity: 0 !important;
+  transform: translateX(-125%) rotate(-12deg) !important;
+}
+
+.perspectivism-review-card.is-exiting-right {
+  opacity: 0 !important;
+  transform: translateX(125%) rotate(12deg) !important;
+}
+
+.perspectivism-review-card.is-exiting-up {
+  opacity: 0 !important;
+  transform: translateY(-45%) scale(0.98) !important;
+}
+
+.perspectivism-review-line {
+  font-size: calc(var(--font-text-size) * 1.08);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.perspectivism-review-single-perspective {
+  color: var(--text-accent);
+  font-weight: var(--font-semibold);
+  margin-top: 14px;
+  text-align: center;
+}
+
+.perspectivism-review-swipe-actions {
+  display: flex;
+  justify-content: center;
+  gap: 34px;
+  margin-top: 14px;
+}
+
+.perspectivism-review-swipe-button {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  font-size: 25px;
+  height: 48px;
+  justify-content: center;
+  padding: 0;
+  width: 48px;
+}
+
+.perspectivism-review-swipe-button.is-reject {
+  color: var(--color-red);
+}
+
+.perspectivism-review-swipe-button.is-accept {
+  color: var(--color-green);
+}
+
+.perspectivism-review-swipe-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.perspectivism-review-two-actions {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  margin-top: 16px;
+}
+
+.perspectivism-review-direction-button {
+  align-items: center;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  color: var(--text-normal);
+  display: flex;
+  font: inherit;
+  font-weight: var(--font-semibold);
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 48px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 9px 14px;
+  text-align: left;
+}
+
+.perspectivism-review-direction-button:hover {
+  border-color: var(--interactive-accent);
+}
+
+.perspectivism-review-direction-button.is-right-direction {
+  text-align: right;
+}
+
+.perspectivism-review-direction-arrow {
+  color: var(--text-accent);
+  flex: 0 0 auto;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.perspectivism-review-multiple-perspectives {
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.perspectivism-review-apply {
+  display: block;
+  margin: 20px auto 0;
+}
+
+.perspectivism-review-finished-count {
+  line-height: 1.6;
+  margin: 8px 0 22px;
+}
+
+.perspectivism-review-close {
+  display: block;
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .perspectivism-pixel-canvas {
+    display: none;
+  }
+
+  .perspectivism-review-card,
+  .perspectivism-review-perspective {
+    transition: none;
+  }
+}

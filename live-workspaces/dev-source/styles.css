@@ -1,0 +1,33 @@
+/*
+ * A live switch changes only classes on WorkspaceTabs containers. The split
+ * tree stays owned by Obsidian; no pane is moved, detached, or reconstructed.
+ */
+body.live-workspaces-enabled:not(.is-phone) .workspace-tabs.live-workspace-hidden-pane {
+  display: none;
+}
+
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-root .workspace-split,
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-left-split .workspace-split,
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-right-split .workspace-split {
+  display: none;
+}
+
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-root .workspace-split:has(.workspace-tabs:not(.live-workspace-hidden-pane)),
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-left-split .workspace-split:has(.workspace-tabs:not(.live-workspace-hidden-pane)),
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-right-split .workspace-split:has(.workspace-tabs:not(.live-workspace-hidden-pane)) {
+  display: flex;
+}
+
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-root .workspace-split:not(:has(.workspace-tabs)),
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-left-split .workspace-split:not(:has(.workspace-tabs)),
+body.live-workspaces-enabled:not(.is-phone) .workspace-split.mod-right-split .workspace-split:not(:has(.workspace-tabs)) {
+  display: flex;
+}
+
+body.live-workspaces-enabled:not(.is-phone) .workspace-tabs.live-workspace-visible-pane {
+  visibility: visible;
+}
+
+body.live-workspaces-fail-safe .workspace-tabs.live-workspace-owned-pane {
+  display: flex;
+}

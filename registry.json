@@ -1,101 +1,350 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "plugins": [
     {
       "id": "activity",
       "name": "Activity",
       "version": "1.0.0",
-      "path": "activity"
+      "path": "activity",
+      "sourcePath": "activity/dev-source",
+      "sourceHash": "ea2e347a96a74fe9b69188209bfd527a53ea94e596bb9d38aaf62309e6572d18",
+      "runtimeHash": "f852d9295ae0a9366e26e00c802867999068c4eb7c2d4ef69e76ebf51c0c3c7c",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
     },
     {
       "id": "experience",
       "name": "Опыт",
       "version": "0.9.0",
-      "path": "experience"
+      "path": "experience",
+      "runtimeHash": "8642d67ea8ebcf0741c2fb369adf14af875663319ebc2a110f29fc8a94995c07",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
     },
     {
-      "id": "term-interval-review",
-      "name": "Повторение терминов",
-      "version": "0.38.0",
-      "path": "priority-recall"
+      "id": "focus-zen-black",
+      "name": "Focus Zen Black",
+      "version": "1.0.1",
+      "path": "focus-zen-black",
+      "sourcePath": "focus-zen-black/dev-source",
+      "sourceHash": "0e22bdb896f5e6a0808a0e8f626b1f3394792e22307b0bd5b279de7f75834908",
+      "runtimeHash": "c86be2593b0721fddcd6f3d04ac6e23e90ec479e328b1780efc60c36e3560bca",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": false
     },
     {
-      "id": "jump-to-recall",
-      "name": "Переход к повторению",
-      "version": "1.0.0",
-      "path": "jump-to-recall"
-    },
-    {
-      "id": "memory-monitor-ru",
-      "name": "Монитор ресурсов",
-      "version": "1.1.0",
-      "path": "resource-monitor"
-    },
-    {
-      "id": "style-settings-color-cycle",
-      "name": "Style Settings — 8 тем",
-      "version": "2.6.0",
-      "path": "style-settings-plugin"
-    },
-    {
-      "id": "updater-plugin",
-      "name": "Updater Plugin",
-      "version": "0.10.2",
-      "path": "updater-plugin"
-    },
-    {
-      "id": "line-clone-sync",
-      "name": "Line Clone Sync",
-      "version": "1.2.0",
-      "path": "linked-lines"
-    },
-    {
-      "id": "parsing",
-      "name": "Parsing",
-      "version": "0.14.0",
-      "path": "parsing"
-    },
-    {
-      "id": "omnisearch",
-      "name": "Search",
-      "version": "1.30.2",
-      "path": "search"
-    },
-    {
-      "id": "interactive-formulas",
-      "name": "Interactive Formulas",
-      "version": "0.1.8",
-      "path": "interactive-formulas"
-    },
-    {
-      "id": "rick-ui",
-      "name": "Rick UI",
-      "version": "0.3.1",
-      "path": "rick-ui"
-    },
-    {
-      "id": "vps-sync",
-      "name": "VPS Sync",
-      "version": "0.1.6",
-      "path": "vps-sync"
-    },
-    {
-      "id": "virtual-linker",
-      "name": "Virtual Linker / Glossary",
-      "version": "1.5.7",
-      "path": "virtual-linker"
-    },
-    {
-      "id": "home-tab",
-      "name": "Home tab",
-      "version": "1.2.5",
-      "path": "home-tab"
+      "id": "git",
+      "name": "Git",
+      "version": "0.1.0",
+      "path": "git",
+      "sourcePath": "git/dev-source",
+      "sourceHash": "2531d4f69d18ab8a709dd01ea7b9792a73997cc141a04714367d5380aacbe34b",
+      "runtimeHash": "da8520b82763d36e8e3ea774b81b145f8a434b565fb8286d5f4c5aa9964aefa1",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": true,
+      "mobile": false
     },
     {
       "id": "gpt-obsidian",
       "name": "GPT Obsidian",
       "version": "1.2.3",
-      "path": "gpt-obsidian"
+      "path": "gpt-obsidian",
+      "runtimeHash": "9637f0deca79dd09b3fd11f998b01e30640cdc82aa4bd88e204d1fbdbf22eaf7",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json"
+      ],
+      "isDesktopOnly": true,
+      "mobile": false
+    },
+    {
+      "id": "home-tab",
+      "name": "Home tab",
+      "version": "1.2.5",
+      "path": "home-tab",
+      "runtimeHash": "290cf64861fca0b4f8741afb04e0b36634361f3effd8c7ec22101c073f79c05e",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "interactive-formulas",
+      "name": "Interactive Formulas",
+      "version": "0.1.8",
+      "path": "interactive-formulas",
+      "runtimeHash": "fbfdf627dd2c78b6bdf7c56dc47a98a8c8f11cb307bd77828ce40a7fb5b9ed2c",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "jump-to-recall",
+      "name": "Переход к повторению",
+      "version": "1.0.0",
+      "path": "jump-to-recall",
+      "runtimeHash": "56d685e30bf1ad7d6efd34c3a962aa47bec09c70e41e270b7556756283374a25",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "line-clone-sync",
+      "name": "Line Clone Sync",
+      "version": "1.2.0",
+      "path": "linked-lines",
+      "sourcePath": "linked-lines/dev-source",
+      "sourceHash": "84682d94ae9771d170abf2e848a1509a775ea436c3b1c54b03401b872e365cc7",
+      "runtimeHash": "91e903ecad3a929e8f51401d51a361227d1947922355d8240f5f1f0fd6cad0b5",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "live-workspaces",
+      "name": "Live Workspaces",
+      "version": "0.1.0",
+      "path": "live-workspaces",
+      "sourcePath": "live-workspaces/dev-source",
+      "sourceHash": "d4c83b7a802231f1ae38e9f66cefbe87ba6be2e46ec2ff42655b09e4bde66528",
+      "runtimeHash": "177bf02adb4bd36c2e0a07ed8ebf7d2ad9b64b65b341899965b8bff2e1e9e945",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": true,
+      "mobile": false
+    },
+    {
+      "id": "memory-monitor-ru",
+      "name": "Монитор ресурсов",
+      "version": "1.1.0",
+      "path": "resource-monitor",
+      "sourcePath": "resource-monitor/dev-source",
+      "sourceHash": "ad8553e9fcc06fb7f852c26c4dc58865963a96840bd7957f0dfc0a0477e9a575",
+      "runtimeHash": "f319e67abdf48f44d5a58fde3a27d6c4d94766e422b5f134b0202dbb5452b434",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": true,
+      "mobile": false
+    },
+    {
+      "id": "omnisearch",
+      "name": "Search",
+      "version": "1.30.2",
+      "path": "search",
+      "sourcePath": "search/dev-source",
+      "sourceHash": "933f1139b6c738090d2e80ace6164c337ca765cc82d7b15a53fefe2fb100ddba",
+      "runtimeHash": "83de8be16270f09b55a406e221d2d9a45776f6bdf1447ba218ce8d83e229e249",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "parsing",
+      "name": "Parsing",
+      "version": "0.14.0",
+      "path": "parsing",
+      "runtimeHash": "8496d78a839b8176702788c83c65cad121af15e608f69ac2e3b3f2c8861a92ff",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": false
+    },
+    {
+      "id": "perspectivism",
+      "name": "Perspectivism",
+      "version": "1.1.30",
+      "path": "perspectivism",
+      "sourcePath": "perspectivism/dev-source",
+      "sourceHash": "cf38a767de8b233ffc3cf414fbb5894e8755c4d156625feddb5f0e6e743cc350",
+      "runtimeHash": "a6cb9e20cf6577da93c6cbfe044f774caceec341f125b0d345320c19bd1e9eea",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "recall-linker",
+      "name": "Ссылки повторения",
+      "version": "1.0.0",
+      "path": "recall-linker",
+      "sourcePath": "recall-linker/dev-source",
+      "sourceHash": "58336dca6a3170e6570c6129779781b9debefc97d757317a9302328ece456320",
+      "runtimeHash": "beef117bacaa6d5994b8b0c94d9a8372291b3685be76a8e72e19e134872f6c46",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "rick-ui",
+      "name": "Rick UI",
+      "version": "0.3.1",
+      "path": "rick-ui",
+      "sourcePath": "rick-ui/dev-source",
+      "sourceHash": "43fe431140fbea20bc2b119245af30f1d55e1930e9bef8e07f2d1a941c7eefc6",
+      "runtimeHash": "a805eace43bb1f413134adb2b7bf5d6af3f3423aafdcce534cf02220397ada99",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "style-settings-color-cycle",
+      "name": "Style Settings — 8 тем",
+      "version": "2.6.0",
+      "path": "style-settings-plugin",
+      "runtimeHash": "a98a5d83091f73efa7f05ad6f235f8910db5a502111232ad9fb4e962c4f5ff90",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "term-interval-review",
+      "name": "Повторение терминов",
+      "version": "0.38.0",
+      "path": "priority-recall",
+      "runtimeHash": "7e405017846fbdffeac9a35ac2f2ab1fed6f2f64e98c602e90eeb34cb88deae6",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "updater-plugin",
+      "name": "Updater Plugin",
+      "version": "0.11.0",
+      "path": "updater-plugin",
+      "sourcePath": "updater-plugin/dev-source",
+      "sourceHash": "a1bf07bb8ac20c04604a3f00819874d49ca381de38697a54b5cc3ef1dcb1d7e7",
+      "runtimeHash": "6d706a1bd4adfc2a87528d045677b95ecfbed5fcd37d42cd9bc404b2e8cd0a3f",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "vault-text-autocomplete",
+      "name": "Автодополнение текста по хранилищу",
+      "version": "1.0.0",
+      "path": "vault-text-autocomplete",
+      "sourcePath": "vault-text-autocomplete/dev-source",
+      "sourceHash": "f10ea3e3fd1b813be3061f174e92650c1bec2500c78839fd6abc87b43d8f7d0c",
+      "runtimeHash": "0bf615aab6dee71dee60b791c63a0256aeb3143536408b92d7f06da21f4bba12",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": false
+    },
+    {
+      "id": "virtual-linker",
+      "name": "Virtual Linker / Glossary",
+      "version": "1.5.7",
+      "path": "virtual-linker",
+      "runtimeHash": "ed2ba1dab8b2f59a1bd87e2308732decb6cd38949e666e9bcf5561981c25e2db",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "isDesktopOnly": false,
+      "mobile": true
+    },
+    {
+      "id": "vps-sync",
+      "name": "VPS Sync",
+      "version": "0.1.6",
+      "path": "vps-sync",
+      "sourcePath": "vps-sync/dev-source",
+      "sourceHash": "f0c962b4aa9fbb026178de7bfd3c3308db04459b0255515e3a57ae20a2222db0",
+      "runtimeHash": "71629c1bbe342d99895a6e1a2b36363bb5949be45cc1d4a58459b4e52a88326d",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json",
+        "styles.css"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": false,
+      "mobile": true
     }
   ]
 }

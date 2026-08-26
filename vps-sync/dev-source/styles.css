@@ -1,0 +1,204 @@
+.vps-sync-warning {
+  color: var(--text-warning);
+}
+
+.vps-sync-error {
+  color: var(--text-error);
+}
+
+.vps-sync-panel {
+  --vps-sync-card-radius: var(--radius-m);
+  padding: var(--size-4-3);
+  overflow-y: auto;
+}
+
+.vps-sync-panel-header,
+.vps-sync-section-heading,
+.vps-sync-activity-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+}
+
+.vps-sync-panel-header {
+  margin-bottom: var(--size-4-3);
+}
+
+.vps-sync-panel-header h2,
+.vps-sync-section-heading h3 {
+  margin: 0;
+}
+
+.vps-sync-version,
+.vps-sync-muted,
+.vps-sync-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.vps-sync-status-card,
+.vps-sync-panel-section {
+  margin-bottom: var(--size-4-3);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--vps-sync-card-radius);
+  background: var(--background-secondary);
+}
+
+.vps-sync-section-label {
+  margin-bottom: var(--size-4-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vps-sync-current-status {
+  color: var(--text-accent);
+  font-weight: var(--font-semibold);
+  overflow-wrap: anywhere;
+}
+
+.vps-sync-current-status.is-ready {
+  color: var(--color-green);
+}
+
+.vps-sync-current-status.is-paused {
+  color: var(--text-muted);
+}
+
+.vps-sync-current-status.is-error {
+  color: var(--text-error);
+}
+
+.vps-sync-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.vps-sync-controls button {
+  width: 100%;
+}
+
+.vps-sync-controls button:first-child {
+  grid-column: 1 / -1;
+}
+
+.vps-sync-section-heading {
+  margin-bottom: var(--size-4-2);
+}
+
+.vps-sync-section-heading h3 {
+  font-size: var(--font-ui-medium);
+}
+
+.vps-sync-heading-actions {
+  display: flex;
+  gap: var(--size-4-1);
+}
+
+.vps-sync-section-heading button,
+.vps-sync-heading-actions button {
+  padding: var(--size-2-2) var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+}
+
+.vps-sync-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--size-4-2);
+}
+
+.vps-sync-metric {
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.vps-sync-metric.is-warning .vps-sync-metric-value {
+  color: var(--text-warning);
+}
+
+.vps-sync-metric.is-error .vps-sync-metric-value {
+  color: var(--text-error);
+}
+
+.vps-sync-metric-value {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-bold);
+}
+
+.vps-sync-metric-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.vps-sync-error-list,
+.vps-sync-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  max-height: 48vh;
+  overflow-y: auto;
+}
+
+.vps-sync-error-item,
+.vps-sync-activity-item {
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  overflow-wrap: anywhere;
+}
+
+.vps-sync-error-item {
+  border-left: 3px solid var(--text-error);
+  color: var(--text-error);
+  white-space: pre-wrap;
+}
+
+.vps-sync-activity-item {
+  border-left: 3px solid var(--text-muted);
+}
+
+.vps-sync-activity-item.is-success {
+  border-left-color: var(--color-green);
+}
+
+.vps-sync-activity-item.is-warning {
+  border-left-color: var(--text-warning);
+}
+
+.vps-sync-activity-item.is-error {
+  border-left-color: var(--text-error);
+}
+
+.vps-sync-activity-meta {
+  margin-bottom: var(--size-2-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.vps-sync-activity-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 420px) {
+  .vps-sync-controls,
+  .vps-sync-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .vps-sync-controls button:first-child {
+    grid-column: auto;
+  }
+
+  .vps-sync-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

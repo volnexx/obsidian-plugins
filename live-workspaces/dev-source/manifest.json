@@ -1,0 +1,9 @@
+{
+  "id": "live-workspaces",
+  "name": "Live Workspaces",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.0",
+  "description": "Multiple independent live workspaces that switch by visibility without recreating views.",
+  "author": "mcmarkus",
+  "isDesktopOnly": true
+}

@@ -1,0 +1,9 @@
+{
+  "id": "focus-zen-black",
+  "name": "Focus Zen Black",
+  "version": "1.0.1",
+  "minAppVersion": "1.0.0",
+  "description": "A black focused writing mode with centered current line and original theme text colors.",
+  "author": "Red; black-theme adaptation by OpenAI",
+  "isDesktopOnly": false
+}
