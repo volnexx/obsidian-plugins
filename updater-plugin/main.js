@@ -24,6 +24,8 @@ const CODEX_LOCK_REL = "dev/.codex-active.json";
 const CODEX_LOCK_TOOLTIP = "Обновление заблокировано: работает Codex";
 const CODEX_LOCK_NOTICE = "Обновление заблокировано: активна сессия Codex.";
 const CODEX_POLL_MS = 3000;
+const CODEX_LOCK_STALE_MS = 5 * 60 * 1000;
+const CODEX_LOCK_FUTURE_TOLERANCE_MS = 60 * 1000;
 const RUNTIME_FILES = ["main.js", "manifest.json", "styles.css"];
 
 // Stable manifest.id values. Folder names and localized display names are deliberately not used.
@@ -137,6 +139,42 @@ function sameOrInside(value, root) {
   const p = relPath(value);
   const r = relPath(root);
   return !!r && (p === r || p.startsWith(`${r}/`));
+}
+
+function codexLockTargetsDev(data, vaultPath = "") {
+  if (!data || typeof data !== "object") return false;
+  const scope = normalizedProjectPath(data.scope);
+  if (scope === "dev" || scope === "dev/**") return true;
+
+  const candidates = [
+    ...(Array.isArray(data.paths) ? data.paths : []),
+    ...(Array.isArray(data.workingPaths) ? data.workingPaths : []),
+    ...(Array.isArray(data.targets) ? data.targets : []),
+    data.path,
+    data.workspace
+  ];
+  const vault = normalizedProjectPath(vaultPath);
+  return candidates.some(value => {
+    let candidate = normalizedProjectPath(value);
+    if (!candidate) return false;
+    if (vault && (candidate === vault || candidate.startsWith(`${vault}/`))) {
+      candidate = candidate === vault ? "" : candidate.slice(vault.length + 1);
+    }
+    return candidate === "dev" || candidate.startsWith("dev/");
+  });
+}
+
+function codexLockHeartbeatMs(data) {
+  const value = data?.heartbeatAt || data?.startedAt;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function codexLockIsFresh(data, now = Date.now()) {
+  const heartbeat = codexLockHeartbeatMs(data);
+  if (heartbeat === null) return false;
+  const age = Number(now) - heartbeat;
+  return age >= -CODEX_LOCK_FUTURE_TOLERANCE_MS && age <= CODEX_LOCK_STALE_MS;
 }
 
 class UpdaterSettingTab extends PluginSettingTab {
@@ -304,8 +342,8 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   onunload() {
-    try { this._codexManagerUnsubscribe?.(); } catch {}
-    this._codexManagerUnsubscribe = null;
+    try { this._codexLockWatcher?.close?.(); } catch {}
+    this._codexLockWatcher = null;
     for (const el of this._restoreActionElements || []) {
       try { el.remove(); } catch {}
     }
@@ -346,61 +384,6 @@ module.exports = class UpdaterPlugin extends Plugin {
     return this.node.path.join(this.getDesktopVaultPath(), ...CODEX_LOCK_REL.split("/"));
   }
 
-  getCopilotSessionManager() {
-    return this.isDesktopApp ? this.app.plugins?.plugins?.copilot?.agentSessionManager || null : null;
-  }
-
-  getManagerSessions(manager) {
-    if (!manager) return [];
-    const sessions = manager.getSessions?.();
-    if (Array.isArray(sessions)) return sessions;
-    if (sessions instanceof Map) return Array.from(sessions.values());
-    const active = manager.getActiveSession?.();
-    return active ? [active] : [];
-  }
-
-  sessionIdOf(session) {
-    return String(session?.getBackendSessionId?.() || session?.sessionId || "").trim();
-  }
-
-  isLiveSession(session) {
-    if (!session) return false;
-    const status = String(session.getStatus?.() || session.status || "").toLowerCase();
-    return status !== "closed" && status !== "disposed" && status !== "failed";
-  }
-
-  managerHasActiveSession(manager = this.getCopilotSessionManager()) {
-    if (!manager) return false;
-    const active = manager.getActiveSession?.();
-    if (this.isLiveSession(active)) return true;
-    return this.getManagerSessions(manager).some(session => this.isLiveSession(session));
-  }
-
-  isPidAlive(pid) {
-    const value = Number(pid);
-    if (!Number.isSafeInteger(value) || value <= 1) return false;
-    try { process.kill(value, 0); return true; }
-    catch (error) { return error?.code === "EPERM"; }
-  }
-
-  async scanActiveCodexProcesses() {
-    if (!this.isDesktopApp || !this.node || !Platform.isLinux) return false;
-    let entries = [];
-    try { entries = await this.node.fsp.readdir("/proc", { withFileTypes: true }); }
-    catch { return false; }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-      try {
-        const raw = await this.node.fsp.readFile(`/proc/${entry.name}/cmdline`, "utf8");
-        const args = raw.split("\0").filter(Boolean);
-        const executable = (args[0] || "").replace(/\\/gu, "/").split("/").pop() || "";
-        if (executable === "codex-linux-sandbox") return true;
-        if (executable === "codex" && (args.includes("exec") || args.some(arg => arg.startsWith("--sandbox-")))) return true;
-      } catch {}
-    }
-    return false;
-  }
-
   async readCodexLock() {
     const lockPath = this.getCodexLockPath();
     if (!lockPath) return null;
@@ -418,26 +401,20 @@ module.exports = class UpdaterPlugin extends Plugin {
     catch (error) { console.warn("[Updater Plugin] stale Codex lock removal failed:", error); }
   }
 
-  async getCodexLockState() {
+  async getCodexLockState(now = Date.now()) {
     if (!this.isDesktopApp || !this.node) return { active: false, reason: "mobile" };
-    const manager = this.getCopilotSessionManager();
-    const managerActive = this.managerHasActiveSession(manager);
     const lock = await this.readCodexLock();
+    if (!lock) return { active: false, reason: "no-lock" };
 
-    if (managerActive) return { active: true, reason: "copilot-session", lock };
-    if (lock) {
-      const sessions = this.getManagerSessions(manager);
-      const lockSessionId = String(lock.data?.sessionId || "").trim();
-      const sessionAlive = !!lockSessionId && sessions.some(session =>
-        this.sessionIdOf(session) === lockSessionId && this.isLiveSession(session));
-      const pidAlive = this.isPidAlive(lock.data?.pid);
-      if (sessionAlive || pidAlive) return { active: true, reason: sessionAlive ? "lock-session" : "lock-pid", lock };
-      if (!manager && await this.scanActiveCodexProcesses()) return { active: true, reason: "lock-process", lock };
+    if (!codexLockTargetsDev(lock.data, this.getDesktopVaultPath())) {
+      await this.removeStaleCodexLock(lock);
+      return { active: false, reason: "non-dev-lock-removed" };
+    }
+    if (!codexLockIsFresh(lock.data, now)) {
       await this.removeStaleCodexLock(lock);
       return { active: false, reason: "stale-lock-removed" };
     }
-    if (!manager && await this.scanActiveCodexProcesses()) return { active: true, reason: "process" };
-    return { active: false, reason: "none" };
+    return { active: true, reason: "fresh-dev-lock", lock };
   }
 
   updateCodexUi(active) {
@@ -456,20 +433,31 @@ module.exports = class UpdaterPlugin extends Plugin {
 
   async refreshCodexState() {
     if (!this.isDesktopApp) return false;
-    const manager = this.getCopilotSessionManager();
-    if (manager !== this._codexManager) {
-      try { this._codexManagerUnsubscribe?.(); } catch {}
-      this._codexManager = manager;
-      this._codexManagerUnsubscribe = typeof manager?.subscribe === "function"
-        ? manager.subscribe(() => { void this.refreshCodexState(); })
-        : null;
-    }
     const state = await this.getCodexLockState();
     this.updateCodexUi(state.active);
     return state.active;
   }
 
+  setupCodexLockWatcher() {
+    if (!this.isDesktopApp || !this.node || this._codexLockWatcher) return;
+    const lockPath = this.getCodexLockPath();
+    if (!lockPath) return;
+    try {
+      const lockName = this.node.path.basename(lockPath);
+      this._codexLockWatcher = this.node.fs.watch(
+        this.node.path.dirname(lockPath),
+        { persistent: false },
+        (_event, filename) => {
+          if (!filename || String(filename) === lockName) void this.refreshCodexState();
+        }
+      );
+    } catch (error) {
+      console.warn("[Updater Plugin] Codex lock watcher unavailable; polling remains active:", error);
+    }
+  }
+
   setupCodexStateMonitoring() {
+    this.setupCodexLockWatcher();
     void this.refreshCodexState();
     const timer = window.setInterval(() => { void this.refreshCodexState(); }, CODEX_POLL_MS);
     this.registerInterval?.(timer);
@@ -2067,6 +2055,9 @@ module.exports = class UpdaterPlugin extends Plugin {
 
 module.exports.__test = {
   compareVersions,
+  codexLockHeartbeatMs,
+  codexLockIsFresh,
+  codexLockTargetsDev,
   decideSync,
   isExcludedProjectPath,
   isMobileEligible,

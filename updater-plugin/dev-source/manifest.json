@@ -1,7 +1,7 @@
 {
   "id": "updater-plugin",
   "name": "Updater Plugin",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "minAppVersion": "1.5.0",
   "description": "На ПК безопасно синхронизирует dev ↔ GitHub → runtime, публикует мобильное зеркало и блокирует запись во время Codex; на iPhone/Android обновляет из отдельного зеркала.",
   "author": "volnexx",

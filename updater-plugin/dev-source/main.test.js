@@ -11,7 +11,7 @@ class FileSystemAdapter {
 }
 
 class Plugin {
-  constructor(app = {}, manifest = { id: "updater-plugin", version: "0.11.0" }) {
+  constructor(app = {}, manifest = { id: "updater-plugin", version: "0.11.1" }) {
     this.app = app;
     this.manifest = manifest;
   }
@@ -203,15 +203,84 @@ test("project hash exclusions cover caches, backups, user data and Codex lock", 
   assert.equal(helpers.isExcludedProjectPath("manifest.json"), false);
 });
 
-test("active Codex lock stops safeUpdateAll before any work", async () => {
+function codexLockPlugin() {
   const plugin = new UpdaterPlugin(appFixture());
   plugin.isDesktopApp = true;
+  plugin.node = {};
+  plugin.getDesktopVaultPath = () => "/vault";
+  plugin.removeStaleCodexLock = async () => {};
+  return plugin;
+}
+
+function freshDevLock(overrides = {}) {
+  return {
+    path: "/vault/dev/.codex-active.json",
+    data: {
+      scope: "dev/**",
+      paths: ["dev/updater-plugin"],
+      startedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      ...overrides
+    }
+  };
+}
+
+test("running Codex process without a lock does not block P", async () => {
+  const plugin = codexLockPlugin();
+  let processScans = 0;
+  plugin.scanActiveCodexProcesses = async () => { processScans++; return true; };
+  plugin.readCodexLock = async () => null;
+  const state = await plugin.getCodexLockState();
+  assert.deepEqual(state, { active: false, reason: "no-lock" });
+  assert.equal(processScans, 0);
+});
+
+test("Copilot work outside dev does not block P", async () => {
+  const plugin = codexLockPlugin();
+  let removed = false;
+  plugin.readCodexLock = async () => freshDevLock({
+    scope: "copilot/**",
+    paths: ["copilot/projects/notes"],
+    workspace: "/vault/copilot/projects/notes"
+  });
+  plugin.removeStaleCodexLock = async () => { removed = true; };
+  const state = await plugin.getCodexLockState();
+  assert.deepEqual(state, { active: false, reason: "non-dev-lock-removed" });
+  assert.equal(removed, true);
+});
+
+test("fresh dev-scoped lock blocks safeUpdateAll before any work", async () => {
+  const plugin = codexLockPlugin();
+  plugin.readCodexLock = async () => freshDevLock();
   let syncCalls = 0;
-  plugin.assertUpdateUnlocked = async () => false;
   plugin.safeDesktopSynchronizeAll = async () => { syncCalls++; };
   await plugin.safeUpdateAll();
   assert.equal(syncCalls, 0);
   assert.equal(plugin._busy, undefined);
+  assert.equal(plugin._codexBlocked, true);
+  assert.ok(notices.at(-1)?.includes("активна сессия Codex"));
+});
+
+test("removing the lock immediately restores ribbon and Settings state", async () => {
+  const plugin = codexLockPlugin();
+  let lock = freshDevLock();
+  plugin.readCodexLock = async () => lock;
+  plugin._updateRibbon = {
+    attrs: {},
+    classList: { toggle() {} },
+    setAttribute(name, value) { this.attrs[name] = value; }
+  };
+  let settingsDisabled = null;
+  plugin.registerLockButton({ setDisabled(value) { settingsDisabled = value; } });
+
+  assert.equal(await plugin.refreshCodexState(), true);
+  assert.equal(plugin._updateRibbon.attrs["aria-disabled"], "true");
+  assert.equal(settingsDisabled, true);
+
+  lock = null;
+  assert.equal(await plugin.refreshCodexState(), false);
+  assert.equal(plugin._updateRibbon.attrs["aria-disabled"], "false");
+  assert.equal(settingsDisabled, false);
 });
 
 test("lock appearing after initial check cancels before backup or write", async () => {
@@ -232,19 +301,36 @@ test("lock appearing after initial check cancels before backup or write", async 
   assert.equal(backups, 0);
 });
 
-test("stale lock with no live session or process is removed", async () => {
-  const plugin = new UpdaterPlugin(appFixture());
-  plugin.isDesktopApp = true;
-  plugin.node = {};
+test("stale heartbeat is removed and cannot block forever", async () => {
+  const plugin = codexLockPlugin();
   let removed = false;
-  plugin.getCopilotSessionManager = () => null;
-  plugin.readCodexLock = async () => ({ path: "/vault/dev/.codex-active.json", data: { pid: 999999, sessionId: "gone" } });
-  plugin.isPidAlive = () => false;
-  plugin.scanActiveCodexProcesses = async () => false;
+  plugin.readCodexLock = async () => freshDevLock({
+    startedAt: "2026-08-27T07:00:00.000Z",
+    heartbeatAt: "2026-08-27T07:00:00.000Z"
+  });
   plugin.removeStaleCodexLock = async () => { removed = true; };
-  const state = await plugin.getCodexLockState();
+  const state = await plugin.getCodexLockState(Date.parse("2026-08-27T07:06:00.000Z"));
   assert.deepEqual(state, { active: false, reason: "stale-lock-removed" });
   assert.equal(removed, true);
+});
+
+test("lock watcher refreshes shared UI state when the lock file changes", () => {
+  const plugin = codexLockPlugin();
+  let watcherCallback = null;
+  let refreshes = 0;
+  plugin.node = {
+    path: require("node:path"),
+    fs: {
+      watch(_dir, _options, callback) {
+        watcherCallback = callback;
+        return { close() {} };
+      }
+    }
+  };
+  plugin.refreshCodexState = async () => { refreshes++; };
+  plugin.setupCodexLockWatcher();
+  watcherCallback("rename", ".codex-active.json");
+  assert.equal(refreshes, 1);
 });
 
 test("mobile onload does not require child_process/process checks and uses iPhone repo", async () => {
