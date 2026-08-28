@@ -52,11 +52,11 @@
     {
       "id": "git",
       "name": "Git",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "path": "git",
       "sourcePath": "git/dev-source",
-      "sourceHash": "2531d4f69d18ab8a709dd01ea7b9792a73997cc141a04714367d5380aacbe34b",
-      "runtimeHash": "da8520b82763d36e8e3ea774b81b145f8a434b565fb8286d5f4c5aa9964aefa1",
+      "sourceHash": "ae1537f84234da9aba5de4ec09eafde65060679a74cd210f3d24c9c083d0add8",
+      "runtimeHash": "94ad744dc503365405982f44a28f888fc1f6c9e3ad59bba20832bc28ab229107",
       "runtimeFiles": [
         "main.js",
         "manifest.json"
@@ -68,15 +68,18 @@
     {
       "id": "gpt-obsidian",
       "name": "GPT Obsidian",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "path": "gpt-obsidian",
-      "runtimeHash": "9637f0deca79dd09b3fd11f998b01e30640cdc82aa4bd88e204d1fbdbf22eaf7",
+      "runtimeHash": "f9bb12b5306cc1ab365b587286ba90852929bea1c9952a1aec92a46482ee5c9f",
       "runtimeFiles": [
         "main.js",
         "manifest.json"
       ],
       "isDesktopOnly": true,
-      "mobile": false
+      "mobile": false,
+      "sourcePath": "gpt-obsidian/dev-source",
+      "sourceHash": "5dfd70fb2a2a4aa21f606fdfbbd8545749267a775b4f355f717b5eacd5deb6b4",
+      "sourceComplete": true
     },
     {
       "id": "home-tab",
@@ -174,11 +177,11 @@
     {
       "id": "omnisearch",
       "name": "Search",
-      "version": "1.30.2",
+      "version": "1.30.3",
       "path": "search",
       "sourcePath": "search/dev-source",
-      "sourceHash": "933f1139b6c738090d2e80ace6164c337ca765cc82d7b15a53fefe2fb100ddba",
-      "runtimeHash": "83de8be16270f09b55a406e221d2d9a45776f6bdf1447ba218ce8d83e229e249",
+      "sourceHash": "af92ff763a33d8886a86cbae8d51e832a4451788ac0c1e91afe50bf3658d4cd3",
+      "runtimeHash": "c267578b922dd8d4cf89cba1e044bf9a61d9059c5107ef2818a0f5ef4641b429",
       "runtimeFiles": [
         "main.js",
         "manifest.json",
@@ -191,16 +194,19 @@
     {
       "id": "parsing",
       "name": "Parsing",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "path": "parsing",
-      "runtimeHash": "8496d78a839b8176702788c83c65cad121af15e608f69ac2e3b3f2c8861a92ff",
+      "runtimeHash": "6f2417947f6bdfcdc4037580d428395625c8576a39898c15dafefbcd2361d545",
       "runtimeFiles": [
         "main.js",
         "manifest.json",
         "styles.css"
       ],
       "isDesktopOnly": false,
-      "mobile": false
+      "mobile": false,
+      "sourcePath": "parsing/dev-source",
+      "sourceHash": "6b9364a7ac7a374a934ff4dab22b2a9ea45bac77d03555cc26dc948e24030ee3",
+      "sourceComplete": true
     },
     {
       "id": "perspectivism",
@@ -256,16 +262,19 @@
     {
       "id": "style-settings-color-cycle",
       "name": "Style Settings — 8 тем",
-      "version": "2.6.0",
+      "version": "2.6.1",
       "path": "style-settings-plugin",
-      "runtimeHash": "a98a5d83091f73efa7f05ad6f235f8910db5a502111232ad9fb4e962c4f5ff90",
+      "runtimeHash": "b1f4a431f3b01125deb73ef9c3304e3a966c910e321e00fedc13a80417296a60",
       "runtimeFiles": [
         "main.js",
         "manifest.json",
         "styles.css"
       ],
       "isDesktopOnly": false,
-      "mobile": true
+      "mobile": true,
+      "sourcePath": "style-settings-plugin/dev-source",
+      "sourceHash": "b1f4a431f3b01125deb73ef9c3304e3a966c910e321e00fedc13a80417296a60",
+      "sourceComplete": true
     },
     {
       "id": "term-interval-review",
@@ -318,16 +327,19 @@
     {
       "id": "virtual-linker",
       "name": "Virtual Linker / Glossary",
-      "version": "1.5.7",
+      "version": "1.5.8",
       "path": "virtual-linker",
-      "runtimeHash": "ed2ba1dab8b2f59a1bd87e2308732decb6cd38949e666e9bcf5561981c25e2db",
+      "runtimeHash": "67a0a53e0b99adaeca8623314e2d48af5c40bbbc2f433d05125d088b12939c26",
       "runtimeFiles": [
         "main.js",
         "manifest.json",
         "styles.css"
       ],
       "isDesktopOnly": false,
-      "mobile": true
+      "mobile": true,
+      "sourcePath": "virtual-linker/dev-source",
+      "sourceHash": "29d48d1a141c15d6af96758f1ff91f82db5d9ad8d7d65179aeb33e259ad1ceda",
+      "sourceComplete": true
     },
     {
       "id": "vps-sync",

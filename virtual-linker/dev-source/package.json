@@ -1,0 +1,9 @@
+{
+  "name": "virtual-linker-local",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test test/*.test.js",
+    "verify": "npm run build && npm test"
+  }
+}
