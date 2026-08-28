@@ -94,6 +94,40 @@ function isMobileEligible(manifest) {
   return !!id && manifest?.isDesktopOnly !== true && !PC_ONLY_PLUGIN_IDS.has(id);
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalJson(value[key])]));
+}
+
+function jsonValuesEqual(left, right) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
+function registryDeltaIsSubsumed(baseRegistry, localRegistry, remoteRegistry) {
+  if (!Array.isArray(baseRegistry?.plugins) || !Array.isArray(localRegistry?.plugins) || !Array.isArray(remoteRegistry?.plugins)) {
+    return false;
+  }
+
+  const withoutPlugins = registry => Object.fromEntries(Object.entries(registry).filter(([key]) => key !== "plugins"));
+  const baseRoot = withoutPlugins(baseRegistry);
+  const localRoot = withoutPlugins(localRegistry);
+  if (!jsonValuesEqual(baseRoot, localRoot) && !jsonValuesEqual(localRoot, withoutPlugins(remoteRegistry))) return false;
+
+  const byId = registry => new Map(registry.plugins.map(entry => [String(entry?.id || ""), entry]));
+  const base = byId(baseRegistry);
+  const local = byId(localRegistry);
+  const remote = byId(remoteRegistry);
+  const ids = new Set([...base.keys(), ...local.keys()]);
+  for (const id of ids) {
+    const before = base.get(id);
+    const after = local.get(id);
+    if (jsonValuesEqual(before, after)) continue;
+    if (!jsonValuesEqual(after, remote.get(id))) return false;
+  }
+  return true;
+}
+
 function stamp() {
   const d = new Date();
   const p = n => String(n).padStart(2, "0");
@@ -1003,21 +1037,140 @@ module.exports = class UpdaterPlugin extends Plugin {
     await this.runDesktopProcess(process.execPath, ["--check", "main.js"], { cwd: projectDir });
   }
 
+  expectedGitOrigin(repo) {
+    return `https://github.com/${repo}.git`;
+  }
+
+  normalizeGitOrigin(value) {
+    return String(value || "").trim().replace(/\/+$/u, "");
+  }
+
+  async assertDisposableCheckoutIdentity(checkout, repo, branch) {
+    const expectedOrigin = this.normalizeGitOrigin(this.expectedGitOrigin(repo));
+    const actualOrigin = this.normalizeGitOrigin((await this.runDesktopProcess("git", ["remote", "get-url", "origin"], { cwd: checkout })).stdout);
+    if (actualOrigin !== expectedOrigin) {
+      throw new Error(`${repo}: служебный checkout имеет неожиданный origin; автоматическое восстановление остановлено.`);
+    }
+    const currentBranch = (await this.runDesktopProcess("git", ["symbolic-ref", "--short", "HEAD"], { cwd: checkout })).stdout;
+    if (currentBranch !== branch) {
+      throw new Error(`${repo}: служебный checkout находится не на ветке ${branch}; автоматическое восстановление остановлено.`);
+    }
+  }
+
+  async readGitJson(checkout, revision, file) {
+    const result = await this.runDesktopProcess("git", ["show", `${revision}:${file}`], { cwd: checkout });
+    return JSON.parse(result.stdout);
+  }
+
+  async localCheckoutHistoryIsSubsumed(checkout, remoteRef) {
+    try {
+      const mergeBase = (await this.runDesktopProcess("git", ["merge-base", "HEAD", remoteRef], { cwd: checkout })).stdout;
+      if (!mergeBase) return false;
+      const changed = (await this.runDesktopProcess("git", ["diff", "--name-only", `${mergeBase}..HEAD`, "--"], { cwd: checkout })).stdout
+        .split(/\r?\n/u)
+        .map(value => normalizedProjectPath(value))
+        .filter(Boolean);
+
+      for (const file of changed.filter(value => value !== "registry.json")) {
+        const differs = await this.runDesktopProcess("git", ["diff", "--quiet", "HEAD", remoteRef, "--", file], { cwd: checkout })
+          .then(() => false)
+          .catch(() => true);
+        if (differs) return false;
+      }
+
+      if (changed.includes("registry.json")) {
+        const [baseRegistry, localRegistry, remoteRegistry] = await Promise.all([
+          this.readGitJson(checkout, mergeBase, "registry.json"),
+          this.readGitJson(checkout, "HEAD", "registry.json"),
+          this.readGitJson(checkout, remoteRef, "registry.json")
+        ]);
+        if (!registryDeltaIsSubsumed(baseRegistry, localRegistry, remoteRegistry)) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async cloneGitCheckout(repo, branch, checkout) {
+    await this.runDesktopProcess("git", ["clone", "--single-branch", "--branch", branch, this.expectedGitOrigin(repo), checkout]);
+  }
+
+  async recreateDisposableCheckout(repo, branch, key, checkout) {
+    const { fsp, path } = this.node;
+    const root = this.getDesktopSyncRoot();
+    const nonce = `${stamp()}-${Date.now()}`;
+    const replacement = path.join(root, `.${key}.recovery-next-${nonce}`);
+    const recoveryRoot = path.join(root, "recovery");
+    const backup = path.join(recoveryRoot, `${key}-${nonce}`);
+    if (await this.desktopExists(replacement) || await this.desktopExists(backup)) {
+      throw new Error(`${repo}: не удалось выбрать безопасный путь recovery.`);
+    }
+
+    try {
+      await this.cloneGitCheckout(repo, branch, replacement);
+      await this.assertDisposableCheckoutIdentity(replacement, repo, branch);
+      const replacementStatus = await this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: replacement });
+      if (replacementStatus.stdout) throw new Error("новый checkout неожиданно содержит изменения");
+      const [head, remote] = await Promise.all([
+        this.runDesktopProcess("git", ["rev-parse", "HEAD"], { cwd: replacement }),
+        this.runDesktopProcess("git", ["rev-parse", `origin/${branch}`], { cwd: replacement })
+      ]);
+      if (head.stdout !== remote.stdout) throw new Error("новый checkout не совпадает с origin");
+    } catch (error) {
+      try { await fsp.rm(replacement, { recursive: true, force: true }); } catch {}
+      throw new Error(`${repo}: безопасное пересоздание служебного checkout не удалось: ${error.message}`);
+    }
+
+    await fsp.mkdir(recoveryRoot, { recursive: true });
+    await fsp.rename(checkout, backup);
+    try {
+      await fsp.rename(replacement, checkout);
+    } catch (error) {
+      try { await fsp.rename(backup, checkout); } catch {}
+      try { await fsp.rm(replacement, { recursive: true, force: true }); } catch {}
+      throw new Error(`${repo}: не удалось активировать восстановленный checkout: ${error.message}`);
+    }
+    return checkout;
+  }
+
   async ensureGitCheckout(repo, branch, key) {
     const { fsp, path } = this.node;
     const root = this.getDesktopSyncRoot();
     const checkout = path.join(root, key);
     await fsp.mkdir(root, { recursive: true });
     if (!(await this.desktopExists(path.join(checkout, ".git")))) {
-      await fsp.rm(checkout, { recursive: true, force: true });
-      await this.runDesktopProcess("git", ["clone", "--single-branch", "--branch", branch, `https://github.com/${repo}.git`, checkout]);
+      if (await this.desktopExists(checkout)) {
+        const unexpected = await fsp.readdir(checkout);
+        if (unexpected.length) throw new Error(`${repo}: путь служебного checkout занят неизвестными файлами; автоматическое восстановление остановлено.`);
+        await fsp.rmdir(checkout);
+      }
+      await this.cloneGitCheckout(repo, branch, checkout);
     }
     const status = await this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: checkout });
     if (status.stdout) throw new Error(`${repo}: служебный checkout содержит незавершённые изменения.`);
+    await this.assertDisposableCheckoutIdentity(checkout, repo, branch);
     await this.runDesktopProcess("git", ["fetch", "origin", branch], { cwd: checkout });
-    await this.runDesktopProcess("git", ["checkout", branch], { cwd: checkout });
-    await this.runDesktopProcess("git", ["merge", "--ff-only", `origin/${branch}`], { cwd: checkout });
-    return checkout;
+    const remoteRef = `origin/${branch}`;
+    const relation = (await this.runDesktopProcess("git", ["rev-list", "--left-right", "--count", `HEAD...${remoteRef}`], { cwd: checkout })).stdout
+      .split(/\s+/u)
+      .map(value => Number(value));
+    const [ahead, behind] = relation;
+    if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+      throw new Error(`${repo}: не удалось определить состояние служебного checkout.`);
+    }
+    if (ahead === 0 && behind === 0) return checkout;
+    if (ahead === 0 && behind > 0) {
+      await this.runDesktopProcess("git", ["merge", "--ff-only", remoteRef], { cwd: checkout });
+      return checkout;
+    }
+    if (ahead > 0 && behind > 0) {
+      if (!(await this.localCheckoutHistoryIsSubsumed(checkout, remoteRef))) {
+        throw new Error(`${repo}: служебный checkout разошёлся с origin и содержит уникальную локальную историю; recovery остановлен без удаления данных.`);
+      }
+      return this.recreateDisposableCheckout(repo, branch, key, checkout);
+    }
+    throw new Error(`${repo}: служебный checkout содержит локальные commits, отсутствующие на origin; recovery остановлен без удаления данных.`);
   }
 
   async gitHead(checkout) {
@@ -2061,5 +2214,6 @@ module.exports.__test = {
   decideSync,
   isExcludedProjectPath,
   isMobileEligible,
+  registryDeltaIsSubsumed,
   pcOnlyPluginIds: Array.from(PC_ONLY_PLUGIN_IDS).sort()
 };

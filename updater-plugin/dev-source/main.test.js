@@ -11,7 +11,7 @@ class FileSystemAdapter {
 }
 
 class Plugin {
-  constructor(app = {}, manifest = { id: "updater-plugin", version: "0.11.1" }) {
+  constructor(app = {}, manifest = { id: "updater-plugin", version: "0.11.2" }) {
     this.app = app;
     this.manifest = manifest;
   }
@@ -86,6 +86,96 @@ test("same version and same project hash is a no-op", () => {
 
 test("same version and different project hashes is a conflict", () => {
   assert.equal(helpers.decideSync("1.2.0", "1.2.0", "dev", "remote"), "conflict");
+});
+
+function gitCheckoutFixture({ status = "", relation = "0 0", subsumed = false } = {}) {
+  const plugin = new UpdaterPlugin(appFixture());
+  const calls = [];
+  const recoveries = [];
+  plugin.node = {
+    path: require("node:path"),
+    fsp: {
+      async mkdir() {},
+      async readdir() { return []; },
+      async rmdir() {}
+    }
+  };
+  plugin.getDesktopSyncRoot = () => "/sync";
+  plugin.desktopExists = async value => value === "/sync/main" || value === "/sync/main/.git";
+  plugin.runDesktopProcess = async (command, args, options = {}) => {
+    calls.push({ command, args: [...args], cwd: options.cwd });
+    const operation = args.join(" ");
+    if (operation === "status --porcelain") return { stdout: status };
+    if (operation === "remote get-url origin") return { stdout: "https://github.com/volnexx/obsidian-plugins.git" };
+    if (operation === "symbolic-ref --short HEAD") return { stdout: "centralize-plugins" };
+    if (operation === "fetch origin centralize-plugins") return { stdout: "" };
+    if (operation === "rev-list --left-right --count HEAD...origin/centralize-plugins") return { stdout: relation };
+    if (operation === "merge --ff-only origin/centralize-plugins") return { stdout: "" };
+    throw new Error(`unexpected git operation: ${operation}`);
+  };
+  plugin.localCheckoutHistoryIsSubsumed = async () => subsumed;
+  plugin.recreateDisposableCheckout = async (...args) => {
+    recoveries.push(args);
+    return "/sync/main";
+  };
+  return { plugin, calls, recoveries };
+}
+
+test("checkout equal to remote continues normally", async () => {
+  const { plugin, calls, recoveries } = gitCheckoutFixture({ relation: "0 0" });
+  assert.equal(await plugin.ensureGitCheckout("volnexx/obsidian-plugins", "centralize-plugins", "main"), "/sync/main");
+  assert.equal(recoveries.length, 0);
+  assert.equal(calls.some(call => call.args.includes("merge")), false);
+});
+
+test("checkout behind remote is updated by fast-forward", async () => {
+  const { plugin, calls, recoveries } = gitCheckoutFixture({ relation: "0 2" });
+  assert.equal(await plugin.ensureGitCheckout("volnexx/obsidian-plugins", "centralize-plugins", "main"), "/sync/main");
+  assert.equal(recoveries.length, 0);
+  assert.equal(calls.filter(call => call.args.join(" ") === "merge --ff-only origin/centralize-plugins").length, 1);
+});
+
+test("clean diverged disposable checkout is safely recreated without changing remote", async () => {
+  const { plugin, calls, recoveries } = gitCheckoutFixture({ relation: "1 1", subsumed: true });
+  assert.equal(await plugin.ensureGitCheckout("volnexx/obsidian-plugins", "centralize-plugins", "main"), "/sync/main");
+  assert.equal(recoveries.length, 1);
+  const operations = calls.map(call => call.args.join(" "));
+  assert.equal(operations.some(value => /(?:merge|rebase|push)/u.test(value)), false);
+  assert.ok(operations.includes("fetch origin centralize-plugins"));
+});
+
+test("diverged checkout with unexpected uncommitted files stops without cleanup", async () => {
+  const { plugin, calls, recoveries } = gitCheckoutFixture({ status: " M registry.json", relation: "1 1", subsumed: true });
+  await assert.rejects(
+    plugin.ensureGitCheckout("volnexx/obsidian-plugins", "centralize-plugins", "main"),
+    /незавершённые изменения/u
+  );
+  assert.equal(recoveries.length, 0);
+  assert.equal(calls.some(call => call.args[0] === "fetch"), false);
+});
+
+test("diverged checkout with unproven unique local commit stops", async () => {
+  const { plugin, calls, recoveries } = gitCheckoutFixture({ relation: "1 1", subsumed: false });
+  await assert.rejects(
+    plugin.ensureGitCheckout("volnexx/obsidian-plugins", "centralize-plugins", "main"),
+    /уникальную локальную историю/u
+  );
+  assert.equal(recoveries.length, 0);
+  assert.equal(calls.some(call => /(?:merge|rebase|push)/u.test(call.args.join(" "))), false);
+});
+
+test("registry recovery proof accepts only local deltas already present on remote", () => {
+  const base = { schemaVersion: 2, plugins: [{ id: "p", version: "1.0.0", sourceHash: "old" }] };
+  const local = { schemaVersion: 2, plugins: [{ sourceHash: "new", version: "1.0.1", id: "p" }] };
+  const remote = {
+    schemaVersion: 2,
+    plugins: [
+      { id: "p", version: "1.0.1", sourceHash: "new" },
+      { id: "other", version: "2.0.0" }
+    ]
+  };
+  assert.equal(helpers.registryDeltaIsSubsumed(base, local, remote), true);
+  assert.equal(helpers.registryDeltaIsSubsumed(base, local, { schemaVersion: 2, plugins: [{ id: "p", version: "1.0.1", sourceHash: "different" }] }), false);
 });
 
 function stubDesktopSync(plugin, items) {
