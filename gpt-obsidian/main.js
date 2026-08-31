@@ -307,6 +307,35 @@ function isBridgeDecisionAllowed(optionId, request, allowPermanentApprovals) {
   return bridgeDecisionPolicy(optionId, request, allowPermanentApprovals).allowed;
 }
 
+const CODE_TO_KEY = {
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Space: "space",
+  Enter: "enter",
+  Tab: "tab",
+  Escape: "escape",
+  Backspace: "backspace",
+  Delete: "delete",
+  Insert: "insert",
+  Home: "home",
+  End: "end",
+  PageUp: "pageup",
+  PageDown: "pagedown",
+  ArrowUp: "arrowup",
+  ArrowDown: "arrowdown",
+  ArrowLeft: "arrowleft",
+  ArrowRight: "arrowright"
+};
+
 const FOCUS_PROMPT_SCRIPT = String.raw`(() => {
   const visible = (el) => {
     if (!el) return false;
@@ -353,6 +382,83 @@ const FOCUS_PROMPT_SCRIPT = String.raw`(() => {
 
   return document.activeElement === input || input.contains(document.activeElement);
 })()`;
+
+function normalizeKey(value) {
+  if (value == null) return "";
+  const key = String(value).toLowerCase();
+  if (key === " " || key === "spacebar") return "space";
+  if (key === "esc") return "escape";
+  if (key === "return") return "enter";
+  if (key === "del") return "delete";
+  return key;
+}
+
+function keyCandidates(input) {
+  const result = new Set();
+  const direct = normalizeKey(input.key);
+  if (direct) result.add(direct);
+
+  const code = String(input.code || "");
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) result.add(letter[1].toLowerCase());
+
+  const digit = /^Digit([0-9])$/.exec(code);
+  if (digit) result.add(digit[1]);
+
+  const numpad = /^Numpad([0-9])$/.exec(code);
+  if (numpad) result.add(numpad[1]);
+
+  const mapped = CODE_TO_KEY[code];
+  if (mapped) result.add(normalizeKey(mapped));
+
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) {
+    result.add(code.toLowerCase());
+  }
+
+  return result;
+}
+
+function isMacPlatform() {
+  return process.platform === "darwin";
+}
+
+function hotkeyMatchesInput(hotkey, input) {
+  if (!hotkey || !hotkey.key) return false;
+
+  const expected = { ctrl: false, meta: false, alt: false, shift: false };
+
+  for (const rawModifier of hotkey.modifiers || []) {
+    const modifier = String(rawModifier).toLowerCase();
+    if (modifier === "mod") {
+      if (isMacPlatform()) expected.meta = true;
+      else expected.ctrl = true;
+    } else if (modifier === "ctrl" || modifier === "control") {
+      expected.ctrl = true;
+    } else if (modifier === "meta" || modifier === "cmd" || modifier === "command") {
+      expected.meta = true;
+    } else if (modifier === "alt" || modifier === "option") {
+      expected.alt = true;
+    } else if (modifier === "shift") {
+      expected.shift = true;
+    }
+  }
+
+  if (Boolean(input.control) !== expected.ctrl) return false;
+  if (Boolean(input.meta) !== expected.meta) return false;
+  if (Boolean(input.alt) !== expected.alt) return false;
+  if (Boolean(input.shift) !== expected.shift) return false;
+
+  return keyCandidates(input).has(normalizeKey(hotkey.key));
+}
+
+function isPotentialObsidianShortcut(input) {
+  if (!input || input.type !== "keyDown" || input.isComposing) return false;
+  if (input.control || input.meta || input.alt) return true;
+
+  const key = normalizeKey(input.key);
+  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return true;
+  return ["escape", "insert", "delete", "home", "end", "pageup", "pagedown"].includes(key);
+}
 
 function isChatGptUrl(value) {
   if (!value) return false;
@@ -557,6 +663,7 @@ class GptObsidianPlugin extends Plugin {
     this.activationSerial = 0;
     this.boundWebviews = new Map();
     this.destroyedWebviews = new WeakSet();
+    this.guestBindings = new Map();
     this.remote = null;
     this.warnedRemote = false;
     this.themeRefreshTimer = null;
@@ -640,6 +747,15 @@ class GptObsidianPlugin extends Plugin {
       } catch (_) {}
     }
     this.boundWebviews.clear();
+
+    for (const [id, binding] of this.guestBindings) {
+      try {
+        binding.webContents.removeListener("before-input-event", binding.beforeInput);
+        binding.webContents.removeListener("destroyed", binding.destroyed);
+      } catch (_) {}
+      this.guestBindings.delete(id);
+    }
+
     this.stopBridgeSessionWatch();
     this.restoreCopilotNativeUiTrace();
     if (this.copilotUnregister) this.copilotUnregister();
@@ -859,17 +975,23 @@ class GptObsidianPlugin extends Plugin {
 
   bindWebview(webview) {
     if (this.destroyedWebviews.has(webview)) return;
-    if (this.boundWebviews.has(webview)) return;
+    if (this.boundWebviews.has(webview)) {
+      this.attachGuestKeyboard(webview);
+      return;
+    }
 
     const binding = {
       domReady: null,
       navigated: null,
       navigatedInPage: null,
-      destroyed: null
+      destroyed: null,
+      domReadySeen: false
     };
 
     const domReady = () => {
+      binding.domReadySeen = true;
       this.bridgeBindingFor(webview);
+      this.attachGuestKeyboard(webview);
       this.applyAppearance(webview);
 
       const activeWebview = this.getWebview(this.app.workspace.activeLeaf);
@@ -879,6 +1001,7 @@ class GptObsidianPlugin extends Plugin {
     };
 
     const navigated = (_event, url) => {
+      binding.domReadySeen = false;
       const bridge = this.bridgeBindings.get(webview);
       const pending = bridge?.pending || null;
       if (bridge) {
@@ -906,6 +1029,7 @@ class GptObsidianPlugin extends Plugin {
     };
 
     const navigatedInPage = (_event, url, isMainFrame) => {
+      this.attachGuestKeyboard(webview);
       const bridge = this.bridgeBindings.get(webview);
       const pending = bridge?.pending || null;
       const previousGuestWebContentsId = bridge?.guestWebContentsId ?? null;
@@ -962,6 +1086,93 @@ class GptObsidianPlugin extends Plugin {
     webview.addEventListener("destroyed", destroyed);
     this.boundWebviews.set(webview, binding);
     this.bridgeBindingFor(webview);
+  }
+
+  attachGuestKeyboard(webview) {
+    if (!this.remote || !this.isChatGptWebview(webview)) return;
+    if (!this.boundWebviews.get(webview)?.domReadySeen) return;
+    if (typeof webview.getWebContentsId !== "function") return;
+
+    let id;
+    let webContents;
+    try {
+      id = webview.getWebContentsId();
+      if (!id || this.guestBindings.has(id)) return;
+      webContents = this.remote.webContents.fromId(id);
+    } catch (error) {
+      this.warnRemote(error);
+      return;
+    }
+
+    if (!webContents || webContents.isDestroyed?.()) return;
+
+    const beforeInput = (event, input) => this.handleGuestInput(event, input);
+
+    const destroyed = () => {
+      const guestBinding = this.guestBindings.get(id);
+      if (!guestBinding) return;
+      try {
+        guestBinding.webContents.removeListener("before-input-event", guestBinding.beforeInput);
+      } catch (_) {}
+      this.guestBindings.delete(id);
+    };
+
+    webContents.on("before-input-event", beforeInput);
+    webContents.once("destroyed", destroyed);
+    this.guestBindings.set(id, { webContents, beforeInput, destroyed });
+  }
+
+  handleGuestInput(event, input) {
+    if (!isPotentialObsidianShortcut(input)) return;
+
+    const commandsApi = this.app.commands;
+    const hotkeyManager = this.app.hotkeyManager;
+    const commands = commandsApi && commandsApi.commands;
+    if (!commandsApi || !hotkeyManager || !commands) return;
+
+    for (const commandId of Object.keys(commands)) {
+      const hotkeys = this.getEffectiveHotkeys(hotkeyManager, commandId);
+      if (!hotkeys || hotkeys.length === 0) continue;
+      if (!hotkeys.some((hotkey) => hotkeyMatchesInput(hotkey, input))) continue;
+
+      let handled = false;
+      try {
+        handled = Boolean(commandsApi.executeCommandById(commandId));
+      } catch (error) {
+        console.error(`[GPT Obsidian] Failed to execute command ${commandId}:`, error);
+      }
+
+      if (handled) {
+        event.preventDefault();
+        return;
+      }
+    }
+  }
+
+  getEffectiveHotkeys(manager, commandId) {
+    const custom = manager.customKeys;
+    if (custom && Object.prototype.hasOwnProperty.call(custom, commandId)) {
+      return Array.isArray(custom[commandId]) ? custom[commandId] : [];
+    }
+
+    const defaults = manager.defaultKeys;
+    if (defaults && Array.isArray(defaults[commandId])) return defaults[commandId];
+
+    if (typeof manager.getHotkeys === "function") {
+      try {
+        const hotkeys = manager.getHotkeys(commandId);
+        if (Array.isArray(hotkeys)) return hotkeys;
+      } catch (_) {}
+    }
+
+    if (typeof manager.getDefaultHotkeys === "function") {
+      try {
+        const hotkeys = manager.getDefaultHotkeys(commandId);
+        if (Array.isArray(hotkeys)) return hotkeys;
+      } catch (_) {}
+    }
+
+    return [];
   }
 
   removeWebviewBinding(webview) {
@@ -2209,6 +2420,10 @@ class GptObsidianPlugin extends Plugin {
 module.exports = GptObsidianPlugin;
 
 module.exports._test = {
+  normalizeKey,
+  keyCandidates,
+  hotkeyMatchesInput,
+  isPotentialObsidianShortcut,
   isChatGptUrl,
   parseRgb,
   invertColor,

@@ -21,6 +21,7 @@ const GptObsidianPlugin = require("./main.js");
 const {
   bridgeDecisionPolicy,
   controlPrompt,
+  hotkeyMatchesInput,
   isBridgeDecisionAllowed,
   isPermanentOption,
   parsePermissionDecision,
@@ -93,6 +94,7 @@ function makePlugin(leaf, guests) {
   plugin.activationSerial = 0;
   plugin.boundWebviews = new Map();
   plugin.destroyedWebviews = new WeakSet();
+  plugin.guestBindings = new Map();
   plugin.bridgeBindings = new Map();
   plugin.bridgeBindingsByLeafId = new Map();
   plugin.copilotUnregister = null;
@@ -114,6 +116,67 @@ function makePlugin(leaf, guests) {
   plugin.remote = { webContents: { fromId: (id) => guests.get(id) || null } };
   plugin.bindWebview = () => undefined;
   return plugin;
+}
+
+function keyboardFixture({
+  commands = ["workspace:next-tab"],
+  hotkeys = {
+    "workspace:next-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowRight" }]
+  },
+  execute = () => true,
+  id = 501
+} = {}) {
+  const guest = new FakeGuest(id);
+  const webview = new FakeWebview(id, true, `https://chatgpt.com/c/keyboard-${id}`);
+  const leaf = { id: `leaf-keyboard-${id}`, view: { webview, containerEl: null } };
+  const plugin = makePlugin(leaf, new Map([[id, guest]]));
+  const calls = [];
+  plugin.app.workspace.activeLeaf = leaf;
+  plugin.app.commands.commands = Object.fromEntries(commands.map((commandId) => [commandId, { id: commandId }]));
+  plugin.app.commands.executeCommandById = (commandId) => {
+    calls.push(commandId);
+    return execute(commandId);
+  };
+  plugin.app.hotkeyManager.customKeys = hotkeys;
+  plugin.bridgeBindingFor = () => null;
+  plugin.applyAppearance = () => true;
+  plugin.schedulePromptFocus = () => undefined;
+
+  GptObsidianPlugin.prototype.bindWebview.call(plugin, webview);
+  webview.emit("dom-ready");
+
+  return { plugin, guest, webview, leaf, calls };
+}
+
+function keyboardEvent() {
+  return {
+    defaultPrevented: false,
+    preventDefaultCalls: 0,
+    preventDefault() {
+      this.defaultPrevented = true;
+      this.preventDefaultCalls += 1;
+    }
+  };
+}
+
+function guestKey(guest, input) {
+  const event = keyboardEvent();
+  guest.emit("before-input-event", event, input);
+  return event;
+}
+
+function modifiedKey(key, code, overrides = {}) {
+  return {
+    type: "keyDown",
+    key,
+    code,
+    control: true,
+    meta: false,
+    alt: true,
+    shift: false,
+    isComposing: false,
+    ...overrides
+  };
 }
 
 function request(options = null) {
@@ -1328,15 +1391,11 @@ test("permission prompt does not describe unavailable session or permanent choic
   assert.doesNotMatch(prompt, /Do NOT choose "Allow Always"/);
 });
 
-test("WebViewer lifecycle stays intact without plugin keyboard ownership", () => {
+test("WebViewer lifecycle attaches exactly one plugin keyboard listener after dom-ready", () => {
   const guest = new FakeGuest(501);
   const webview = new FakeWebview(501, true, "https://chatgpt.com/c/lifecycle-only");
   const leaf = { id: "leaf-lifecycle-only", view: { webview, containerEl: null } };
   const plugin = makePlugin(leaf, new Map([[501, guest]]));
-  const keymap = { onKeyEvent: () => "host-keymap" };
-  const executeCommandById = () => "host-command";
-  plugin.app.keymap = keymap;
-  plugin.app.commands.executeCommandById = executeCommandById;
   plugin.bridgeBindingFor = () => null;
   let appearanceCalls = 0;
   plugin.applyAppearance = () => {
@@ -1360,17 +1419,15 @@ test("WebViewer lifecycle stays intact without plugin keyboard ownership", () =>
   assert.equal(typeof plugin.ensureGuestKeyboardAttached, "undefined");
   assert.equal(typeof plugin.coreWebViewerHasKeyboardListener, "undefined");
   assert.equal(typeof plugin.beginGuestKeyboardProbe, "undefined");
-  assert.equal(plugin.app.keymap, keymap);
-  assert.equal(plugin.app.commands.executeCommandById, executeCommandById);
 
+  webview.emit("dom-ready");
   webview.emit("dom-ready");
   webview.emit("did-navigate", {}, webview.url, 200, "OK");
   webview.emit("did-navigate-in-page", {}, webview.url, true);
 
-  assert.equal(appearanceCalls, 3);
-  assert.equal(guest.listenerCount("before-input-event"), 0);
-  assert.equal(plugin.app.keymap, keymap);
-  assert.equal(plugin.app.commands.executeCommandById, executeCommandById);
+  assert.equal(appearanceCalls, 4);
+  assert.equal(guest.listenerCount("before-input-event"), 1);
+  assert.equal(plugin.guestBindings.size, 1);
 
   plugin.removeWebviewBinding(webview);
   assert.equal(plugin.boundWebviews.size, 0);
@@ -1378,15 +1435,145 @@ test("WebViewer lifecycle stays intact without plugin keyboard ownership", () =>
   assert.equal(webview.listenerCount("did-navigate"), 0);
   assert.equal(webview.listenerCount("did-navigate-in-page"), 0);
   assert.equal(webview.listenerCount("destroyed"), 0);
+
+  guest.destroyed = true;
+  guest.emit("destroyed");
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(plugin.guestBindings.size, 0);
 });
 
-test("permission transport resolves guest directly without a keyboard cache", () => {
+test("workspace:next-tab executes exactly once and prevents the handled physical event", () => {
+  const { guest, calls } = keyboardFixture();
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("workspace:previous-tab executes exactly once", () => {
+  const { guest, calls } = keyboardFixture({
+    commands: ["workspace:previous-tab"],
+    hotkeys: {
+      "workspace:previous-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowLeft" }]
+    }
+  });
+  const event = guestKey(guest, modifiedKey("ArrowLeft", "ArrowLeft"));
+
+  assert.deepEqual(calls, ["workspace:previous-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("preventDefault happens only after a matched command reports handled", () => {
+  const sequence = [];
+  const { guest, calls } = keyboardFixture({
+    execute: () => {
+      sequence.push("execute");
+      return true;
+    }
+  });
+  const event = {
+    preventDefaultCalls: 0,
+    preventDefault() {
+      this.preventDefaultCalls += 1;
+      sequence.push("preventDefault");
+    }
+  };
+
+  guest.emit("before-input-event", event, modifiedKey("ArrowRight", "ArrowRight"));
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.deepEqual(sequence, ["execute", "preventDefault"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("matched but unhandled command does not prevent the browser event", () => {
+  const { guest, calls } = keyboardFixture({ execute: () => false });
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 0);
+});
+
+for (const [key, code] of [["a", "KeyA"], ["c", "KeyC"], ["v", "KeyV"], ["x", "KeyX"]]) {
+  test(`unmatched Ctrl+${key.toUpperCase()} remains a Chromium shortcut`, () => {
+    const { guest, calls } = keyboardFixture();
+    const event = guestKey(guest, modifiedKey(key, code, { alt: false }));
+
+    assert.deepEqual(calls, []);
+    assert.equal(event.preventDefaultCalls, 0);
+  });
+}
+
+test("ordinary composer text is not intercepted", () => {
+  const { guest, calls } = keyboardFixture();
+  const event = guestKey(guest, modifiedKey("ф", "KeyA", { control: false, alt: false }));
+
+  assert.deepEqual(calls, []);
+  assert.equal(event.preventDefaultCalls, 0);
+});
+
+test("physical event.code preserves hotkey matching under Russian layout", () => {
+  const input = modifiedKey("д", "KeyL");
+  assert.equal(hotkeyMatchesInput({ modifiers: ["Ctrl", "Alt"], key: "l" }, input), true);
+
+  const { guest, calls } = keyboardFixture({
+    hotkeys: {
+      "workspace:next-tab": [{ modifiers: ["Ctrl", "Alt"], key: "l" }]
+    }
+  });
+  const event = guestKey(guest, input);
+
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("one physical event executes at most one plugin command", () => {
+  const shared = [{ modifiers: ["Ctrl", "Alt"], key: "ArrowRight" }];
+  const { guest, calls } = keyboardFixture({
+    commands: ["workspace:next-tab", "workspace:duplicate-test"],
+    hotkeys: {
+      "workspace:next-tab": shared,
+      "workspace:duplicate-test": shared
+    }
+  });
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("WebViewer focus keeps the listener on the owning guest", () => {
+  const { guest, webview, calls } = keyboardFixture();
+  guest.focused = true;
+  webview.emit("focus");
+
+  assert.equal(guest.listenerCount("before-input-event"), 1);
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("destroyed guest removes its listener and can no longer dispatch", () => {
+  const { plugin, guest, calls } = keyboardFixture();
+  assert.equal(guest.listenerCount("before-input-event"), 1);
+
+  guest.destroyed = true;
+  guest.emit("destroyed");
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(plugin.guestBindings.size, 0);
+
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+  assert.deepEqual(calls, []);
+  assert.equal(event.preventDefaultCalls, 0);
+});
+
+test("permission transport resolves guest directly instead of using keyboard bindings", () => {
   const guest = new FakeGuest(502);
+  const decoy = new FakeGuest(999);
   const webview = new FakeWebview(502, true, "https://chatgpt.com/c/permission-transport");
   const leaf = { id: "leaf-permission-transport", view: { webview, containerEl: null } };
   const plugin = makePlugin(leaf, new Map([[502, guest]]));
+  plugin.guestBindings.set(502, { webContents: decoy });
 
-  assert.equal(Object.prototype.hasOwnProperty.call(plugin, "guestBindings"), false);
   assert.equal(plugin.getGuestWebContents(webview), guest);
   assert.equal(guest.listenerCount("before-input-event"), 0);
 });
