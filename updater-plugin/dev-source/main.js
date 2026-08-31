@@ -27,6 +27,26 @@ const CODEX_POLL_MS = 3000;
 const CODEX_LOCK_STALE_MS = 5 * 60 * 1000;
 const CODEX_LOCK_FUTURE_TOLERANCE_MS = 60 * 1000;
 const RUNTIME_FILES = ["main.js", "manifest.json", "styles.css"];
+const PENDING_PUBLISH_SCHEMA = 1;
+const PENDING_PUBLISH_FILE = "pending-publish.json";
+const LEGACY_PENDING = Object.freeze({
+  repo: "volnexx/obsidian-plugins",
+  branch: "centralize-plugins",
+  remoteBase: "cd33c2a7acca60e4c3db2f070371e240297f70a1",
+  commit: "f717861d425872785ab39350162d0bc114338dd3",
+  tree: "d37a691aebd367c3a616d8e8137de091cb8804bb",
+  registryBlob: "967e5af4a22375d550af04a7e04ba2f178dfee85",
+  pluginId: "updater-plugin",
+  version: "0.11.2",
+  changedPaths: Object.freeze([
+    "registry.json",
+    "updater-plugin/dev-source/main.js",
+    "updater-plugin/dev-source/main.test.js",
+    "updater-plugin/dev-source/manifest.json",
+    "updater-plugin/main.js",
+    "updater-plugin/manifest.json"
+  ])
+});
 
 // Stable manifest.id values. Folder names and localized display names are deliberately not used.
 const PC_ONLY_PLUGIN_IDS = new Set([
@@ -1062,79 +1082,398 @@ module.exports = class UpdaterPlugin extends Plugin {
     return JSON.parse(result.stdout);
   }
 
-  async localCheckoutHistoryIsSubsumed(checkout, remoteRef) {
-    try {
-      const mergeBase = (await this.runDesktopProcess("git", ["merge-base", "HEAD", remoteRef], { cwd: checkout })).stdout;
-      if (!mergeBase) return false;
-      const changed = (await this.runDesktopProcess("git", ["diff", "--name-only", `${mergeBase}..HEAD`, "--"], { cwd: checkout })).stdout
-        .split(/\r?\n/u)
-        .map(value => normalizedProjectPath(value))
-        .filter(Boolean);
+  async gitRemoteHead(checkout, branch) {
+    const remote = await this.runDesktopProcess("git", ["ls-remote", "origin", `refs/heads/${branch}`], { cwd: checkout });
+    const sha = String(remote.stdout || "").split(/\s+/u)[0];
+    if (!/^[0-9a-f]{40}$/iu.test(sha)) throw new Error(`Не удалось подтвердить remote SHA ветки ${branch}.`);
+    return sha;
+  }
 
-      for (const file of changed.filter(value => value !== "registry.json")) {
-        const differs = await this.runDesktopProcess("git", ["diff", "--quiet", "HEAD", remoteRef, "--", file], { cwd: checkout })
-          .then(() => false)
-          .catch(() => true);
-        if (differs) return false;
-      }
-
-      if (changed.includes("registry.json")) {
-        const [baseRegistry, localRegistry, remoteRegistry] = await Promise.all([
-          this.readGitJson(checkout, mergeBase, "registry.json"),
-          this.readGitJson(checkout, "HEAD", "registry.json"),
-          this.readGitJson(checkout, remoteRef, "registry.json")
-        ]);
-        if (!registryDeltaIsSubsumed(baseRegistry, localRegistry, remoteRegistry)) return false;
-      }
-      return true;
-    } catch {
-      return false;
+  async verifyRemoteHead(checkout, branch, expectedSha) {
+    const remoteSha = await this.gitRemoteHead(checkout, branch);
+    if (remoteSha !== expectedSha) {
+      throw new Error(`Remote verification failed: expected ${expectedSha}, remote ${remoteSha}.`);
     }
+    return remoteSha;
+  }
+
+  async gitTreeFiles(checkout, revision, prefix) {
+    const result = await this.runDesktopProcess("git", ["ls-tree", "-r", "--name-only", revision, "--", prefix], { cwd: checkout });
+    const normalizedPrefix = normalizedProjectPath(prefix);
+    return String(result.stdout || "")
+      .split(/\r?\n/u)
+      .map(normalizedProjectPath)
+      .filter(Boolean)
+      .map(file => file === normalizedPrefix ? "" : file.slice(normalizedPrefix.length + 1))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "en"));
+  }
+
+  getPendingPublishJournalPath() {
+    return this.node.path.join(this.getDesktopSyncRoot(), PENDING_PUBLISH_FILE);
+  }
+
+  async readPendingPublishJournal() {
+    try { return await this.readDesktopJson(this.getPendingPublishJournalPath()); }
+    catch (error) {
+      if (error?.code === "ENOENT") return null;
+      throw new Error(`Не удалось прочитать pending publish journal: ${error.message}`);
+    }
+  }
+
+  async writePendingPublishJournal(transaction) {
+    await this.writeDesktopJsonAtomic(this.getPendingPublishJournalPath(), transaction);
+  }
+
+  async removePendingPublishJournal() {
+    try { await this.node.fsp.rm(this.getPendingPublishJournalPath()); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+
+  hashJson(value) {
+    return this.node.crypto.createHash("sha256").update(JSON.stringify(canonicalJson(value)), "utf8").digest("hex");
+  }
+
+  async gitObjectSha(checkout, revision, file = "") {
+    const spec = file ? `${revision}:${normalizedProjectPath(file)}` : `${revision}^{tree}`;
+    return (await this.runDesktopProcess("git", ["rev-parse", spec], { cwd: checkout })).stdout;
+  }
+
+  async gitChangedPaths(checkout, base, pending) {
+    const result = await this.runDesktopProcess("git", ["diff", "--name-only", `${base}..${pending}`, "--"], { cwd: checkout });
+    return String(result.stdout || "").split(/\r?\n/u).map(normalizedProjectPath).filter(Boolean).sort((a, b) => a.localeCompare(b, "en"));
+  }
+
+  async gitBlobMap(checkout, revision, prefix, files) {
+    const result = {};
+    for (const file of [...files].sort((a, b) => a.localeCompare(b, "en"))) {
+      result[file] = await this.gitObjectSha(checkout, revision, `${normalizedProjectPath(prefix)}/${file}`);
+    }
+    return result;
+  }
+
+  async createPendingPublishDraft(checkout, repo, branch, remoteBase, entries) {
+    const plugins = [];
+    for (const entry of entries) {
+      const sourceDir = this.node.path.join(checkout, ...String(entry.sourcePath).split("/"));
+      const runtimeDir = this.node.path.join(checkout, ...String(entry.path).split("/"));
+      const sourceFiles = await this.collectProjectFiles(sourceDir);
+      const runtimeFiles = [...entry.runtimeFiles].sort((a, b) => a.localeCompare(b, "en"));
+      const [sourceHash, runtimeHash] = await Promise.all([
+        this.hashProject(sourceDir),
+        this.hashRuntime(runtimeDir, runtimeFiles)
+      ]);
+      if (sourceHash !== entry.sourceHash || runtimeHash !== entry.runtimeHash) {
+        throw new Error(`${entry.id}: prepared transaction snapshot не совпадает с registry hashes.`);
+      }
+      plugins.push({
+        id: entry.id,
+        version: String(entry.version),
+        path: String(entry.path),
+        sourcePath: String(entry.sourcePath),
+        registryEntry: canonicalJson(entry),
+        registryEntryHash: this.hashJson(entry),
+        sourceFiles,
+        sourceHash,
+        runtimeFiles,
+        runtimeHash,
+        sourceBlobs: null,
+        runtimeBlobs: null
+      });
+    }
+    return {
+      schemaVersion: PENDING_PUBLISH_SCHEMA,
+      status: "preparing",
+      repository: repo,
+      origin: this.expectedGitOrigin(repo),
+      branch,
+      remoteBase,
+      pendingCommit: null,
+      pendingTree: null,
+      registryBlob: null,
+      changedPaths: [],
+      plugins,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  async createCanonicalPublishDraft(repo, branch, remoteBase, outgoing) {
+    const plugins = [];
+    for (const item of outgoing) {
+      const project = item.project;
+      const pluginPath = String(item.entry?.path || project.id);
+      const runtimeFiles = await this.existingRuntimeFiles(project.dir);
+      const [sourceFiles, sourceHash, runtimeHash] = await Promise.all([
+        this.collectProjectFiles(project.dir),
+        this.hashProject(project.dir),
+        this.hashRuntime(project.dir, runtimeFiles)
+      ]);
+      const registryEntry = {
+        id: project.id,
+        name: project.manifest.name || project.id,
+        version: project.version,
+        path: pluginPath,
+        sourcePath: `${pluginPath}/dev-source`,
+        sourceHash,
+        runtimeHash,
+        runtimeFiles,
+        sourceComplete: true,
+        isDesktopOnly: project.manifest.isDesktopOnly === true,
+        mobile: isMobileEligible(project.manifest)
+      };
+      plugins.push({
+        id: project.id,
+        version: String(project.version),
+        path: pluginPath,
+        sourcePath: registryEntry.sourcePath,
+        registryEntry: canonicalJson(registryEntry),
+        registryEntryHash: this.hashJson(registryEntry),
+        sourceFiles,
+        sourceHash,
+        runtimeFiles,
+        runtimeHash,
+        sourceBlobs: null,
+        runtimeBlobs: null
+      });
+    }
+    return {
+      schemaVersion: PENDING_PUBLISH_SCHEMA,
+      status: "preparing",
+      repository: repo,
+      origin: this.expectedGitOrigin(repo),
+      branch,
+      remoteBase,
+      pendingCommit: null,
+      pendingTree: null,
+      registryBlob: null,
+      changedPaths: [],
+      plugins,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  async finalizePendingPublishJournal(checkout, draft, commit) {
+    const plugins = [];
+    for (const plugin of draft.plugins) {
+      plugins.push({
+        ...plugin,
+        sourceBlobs: await this.gitBlobMap(checkout, commit, plugin.sourcePath, plugin.sourceFiles),
+        runtimeBlobs: await this.gitBlobMap(checkout, commit, plugin.path, plugin.runtimeFiles)
+      });
+    }
+    return {
+      ...draft,
+      status: "pending",
+      pendingCommit: commit,
+      pendingTree: await this.gitObjectSha(checkout, commit),
+      registryBlob: await this.gitObjectSha(checkout, commit, "registry.json"),
+      changedPaths: await this.gitChangedPaths(checkout, draft.remoteBase, commit),
+      plugins
+    };
+  }
+
+  validatePendingJournalShape(transaction, repo, branch) {
+    const sha = value => /^[0-9a-f]{40}$/u.test(String(value || ""));
+    if (transaction?.schemaVersion !== PENDING_PUBLISH_SCHEMA || transaction?.status !== "pending") {
+      throw new Error(`${repo}: pending publish journal имеет неподдерживаемую схему или состояние.`);
+    }
+    if (transaction.repository !== repo || transaction.origin !== this.expectedGitOrigin(repo) || transaction.branch !== branch) {
+      throw new Error(`${repo}: pending publish journal относится к другому origin/branch.`);
+    }
+    if (!sha(transaction.remoteBase) || !sha(transaction.pendingCommit) || !sha(transaction.pendingTree) || !sha(transaction.registryBlob)) {
+      throw new Error(`${repo}: pending publish journal содержит некорректные commit/tree SHA.`);
+    }
+    if (!Array.isArray(transaction.plugins) || !transaction.plugins.length || !Array.isArray(transaction.changedPaths)) {
+      throw new Error(`${repo}: pending publish journal не содержит полного transaction snapshot.`);
+    }
+  }
+
+  validatePreparingJournalShape(transaction, repo, branch) {
+    if (transaction?.schemaVersion !== PENDING_PUBLISH_SCHEMA || transaction?.status !== "preparing") {
+      throw new Error(`${repo}: preparing transaction journal имеет неподдерживаемую схему или состояние.`);
+    }
+    if (transaction.repository !== repo || transaction.origin !== this.expectedGitOrigin(repo) || transaction.branch !== branch || !/^[0-9a-f]{40}$/u.test(String(transaction.remoteBase || ""))) {
+      throw new Error(`${repo}: preparing transaction journal относится к другому origin/branch/base.`);
+    }
+    if (transaction.pendingCommit !== null || transaction.pendingTree !== null || !Array.isArray(transaction.plugins) || !transaction.plugins.length) {
+      throw new Error(`${repo}: preparing transaction journal содержит неожиданный commit либо неполный snapshot.`);
+    }
+  }
+
+  async recoverCommittedPreparingTransaction(checkout, repo, branch, draft) {
+    this.validatePreparingJournalShape(draft, repo, branch);
+    await this.assertDisposableCheckoutIdentity(checkout, repo, branch);
+    const status = await this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: checkout });
+    if (status.stdout) throw new Error(`${repo}: interrupted preparing transaction оставила dirty checkout; STOP.`);
+    const [head, parent, count, liveRemote] = await Promise.all([
+      this.gitHead(checkout),
+      this.runDesktopProcess("git", ["rev-parse", "HEAD^"], { cwd: checkout }).then(result => result.stdout),
+      this.runDesktopProcess("git", ["rev-list", "--count", `${draft.remoteBase}..HEAD`], { cwd: checkout }).then(result => Number(result.stdout)),
+      this.gitRemoteHead(checkout, branch)
+    ]);
+    if (head === draft.remoteBase || parent !== draft.remoteBase || count !== 1 || (liveRemote !== draft.remoteBase && liveRemote !== head)) {
+      throw new Error(`${repo}: interrupted preparing transaction не доказывает единственный committed snapshot; STOP.`);
+    }
+    const transaction = await this.finalizePendingPublishJournal(checkout, draft, head);
+    const proof = await this.proveJournalPendingPublish(checkout, repo, branch, transaction);
+    await this.writePendingPublishJournal(transaction);
+    proof.recoveredAfterCommit = true;
+    return proof;
+  }
+
+  async proveJournalPendingPublish(checkout, repo, branch, transaction) {
+    this.validatePendingJournalShape(transaction, repo, branch);
+    await this.assertDisposableCheckoutIdentity(checkout, repo, branch);
+    const status = await this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: checkout });
+    if (status.stdout) throw new Error(`${repo}: pending publish checkout содержит незавершённые изменения.`);
+
+    const [head, parent, count, tree, liveRemote] = await Promise.all([
+      this.gitHead(checkout),
+      this.runDesktopProcess("git", ["rev-parse", "HEAD^"], { cwd: checkout }).then(result => result.stdout),
+      this.runDesktopProcess("git", ["rev-list", "--count", `${transaction.remoteBase}..HEAD`], { cwd: checkout }).then(result => Number(result.stdout)),
+      this.gitObjectSha(checkout, "HEAD"),
+      this.gitRemoteHead(checkout, branch)
+    ]);
+    if (head !== transaction.pendingCommit || parent !== transaction.remoteBase || count !== 1 || tree !== transaction.pendingTree) {
+      throw new Error(`${repo}: checkout HEAD/parent/tree не совпадает с immutable pending transaction.`);
+    }
+    if (liveRemote !== transaction.remoteBase && liveRemote !== transaction.pendingCommit) {
+      throw new Error(`${repo}: live remote не равен ни recorded base, ни verified pending commit.`);
+    }
+
+    const [baseRegistry, pendingRegistry, registryBlob, changed] = await Promise.all([
+      this.readGitJson(checkout, transaction.remoteBase, "registry.json"),
+      this.readGitJson(checkout, transaction.pendingCommit, "registry.json"),
+      this.gitObjectSha(checkout, transaction.pendingCommit, "registry.json"),
+      this.gitChangedPaths(checkout, transaction.remoteBase, transaction.pendingCommit)
+    ]);
+    if (registryBlob !== transaction.registryBlob || !jsonValuesEqual(changed, [...transaction.changedPaths].sort((a, b) => a.localeCompare(b, "en")))) {
+      throw new Error(`${repo}: registry blob или changed paths не совпадают с pending transaction journal.`);
+    }
+    if (!Array.isArray(baseRegistry?.plugins) || !Array.isArray(pendingRegistry?.plugins)) {
+      throw new Error(`${repo}: pending publish содержит некорректный registry.`);
+    }
+    const registryRoot = registry => Object.fromEntries(Object.entries(registry).filter(([key]) => key !== "plugins"));
+    if (!jsonValuesEqual(registryRoot(baseRegistry), registryRoot(pendingRegistry))) {
+      throw new Error(`${repo}: pending publish изменяет неизвестные metadata registry.`);
+    }
+
+    const beforeById = new Map(baseRegistry.plugins.map(entry => [String(entry?.id || ""), entry]));
+    const afterById = new Map(pendingRegistry.plugins.map(entry => [String(entry?.id || ""), entry]));
+    if (beforeById.size !== baseRegistry.plugins.length || afterById.size !== pendingRegistry.plugins.length || beforeById.has("") || afterById.has("")) {
+      throw new Error(`${repo}: pending publish содержит неоднозначные registry entries.`);
+    }
+    const changedIds = [...new Set([...beforeById.keys(), ...afterById.keys()])]
+      .filter(id => !jsonValuesEqual(beforeById.get(id), afterById.get(id)));
+    const recordedIds = transaction.plugins.map(plugin => String(plugin.id)).sort((a, b) => a.localeCompare(b, "en"));
+    if (!changedIds.length || changedIds.some(id => !afterById.has(id)) || !jsonValuesEqual([...changedIds].sort((a, b) => a.localeCompare(b, "en")), recordedIds)) {
+      throw new Error(`${repo}: pending publish не содержит доказуемый registry update.`);
+    }
+
+    const allowedChanged = new Set(["registry.json"]);
+    const pendingProjects = [];
+    for (const recorded of transaction.plugins) {
+      const id = String(recorded.id);
+      const entry = afterById.get(id);
+      if (!entry || !jsonValuesEqual(entry, recorded.registryEntry) || this.hashJson(entry) !== recorded.registryEntryHash) {
+        throw new Error(`${repo}: registry entry pending publish ${id} не совпадает с immutable transaction.`);
+      }
+      const pluginPath = normalizedProjectPath(recorded.path);
+      const sourcePath = normalizedProjectPath(recorded.sourcePath);
+      if (!/^[a-z0-9][a-z0-9_/-]*$/iu.test(pluginPath) || pluginPath.includes("..") || sourcePath !== `${pluginPath}/dev-source`) {
+        throw new Error(`${repo}: pending publish ${id} использует небезопасный путь.`);
+      }
+      if (String(entry.version) !== String(recorded.version) || entry.sourceHash !== recorded.sourceHash || entry.runtimeHash !== recorded.runtimeHash || !jsonValuesEqual(entry.runtimeFiles, recorded.runtimeFiles)) {
+        throw new Error(`${repo}: registry metadata pending publish ${id} не совпадает с recorded hashes/version.`);
+      }
+      const sourceDir = this.node.path.join(checkout, ...sourcePath.split("/"));
+      const runtimeDir = this.node.path.join(checkout, ...pluginPath.split("/"));
+      const [pendingFiles, parentFiles, pendingSourceHash, pendingRuntimeHash, sourceManifest, runtimeManifest, sourceBlobs, runtimeBlobs] = await Promise.all([
+        this.gitTreeFiles(checkout, transaction.pendingCommit, sourcePath),
+        this.gitTreeFiles(checkout, transaction.remoteBase, sourcePath),
+        this.hashProject(sourceDir),
+        this.hashRuntime(runtimeDir, recorded.runtimeFiles),
+        this.readGitJson(checkout, transaction.pendingCommit, `${sourcePath}/manifest.json`),
+        this.readGitJson(checkout, transaction.pendingCommit, `${pluginPath}/manifest.json`),
+        this.gitBlobMap(checkout, transaction.pendingCommit, sourcePath, recorded.sourceFiles),
+        this.gitBlobMap(checkout, transaction.pendingCommit, pluginPath, recorded.runtimeFiles)
+      ]);
+      if (!jsonValuesEqual(pendingFiles, recorded.sourceFiles) || pendingSourceHash !== recorded.sourceHash || pendingRuntimeHash !== recorded.runtimeHash || !jsonValuesEqual(sourceBlobs, recorded.sourceBlobs) || !jsonValuesEqual(runtimeBlobs, recorded.runtimeBlobs)) {
+        throw new Error(`${repo}: committed files/hashes pending publish ${id} не совпадают с immutable transaction.`);
+      }
+      if (sourceManifest.id !== id || runtimeManifest.id !== id || String(sourceManifest.version) !== String(recorded.version) || String(runtimeManifest.version) !== String(recorded.version)) {
+        throw new Error(`${repo}: committed manifest pending publish ${id} не совпадает с transaction version.`);
+      }
+      for (const file of new Set([...recorded.sourceFiles, ...parentFiles])) allowedChanged.add(`${sourcePath}/${file}`);
+      for (const file of recorded.runtimeFiles) allowedChanged.add(`${pluginPath}/${file}`);
+      pendingProjects.push({ id, version: String(recorded.version), dir: sourceDir, folderName: pluginPath, manifest: sourceManifest, transactionPlugin: recorded });
+    }
+
+    if (!changed.includes("registry.json") || changed.some(file => !allowedChanged.has(file))) {
+      throw new Error(`${repo}: pending publish содержит неизвестные файлы или изменения.`);
+    }
+    return { checkout, repo, branch, commit: head, remoteBase: transaction.remoteBase, projects: pendingProjects, changed, transaction, remoteAlreadyPublished: liveRemote === head };
+  }
+
+  async createLegacyPendingTransaction(checkout, repo, branch) {
+    if (repo !== LEGACY_PENDING.repo || branch !== LEGACY_PENDING.branch) return null;
+    const remoteRef = `origin/${branch}`;
+    const [head, parent, tree, liveRemote, status, remoteTracking, relationResult] = await Promise.all([
+      this.gitHead(checkout),
+      this.runDesktopProcess("git", ["rev-parse", "HEAD^"], { cwd: checkout }).then(result => result.stdout),
+      this.gitObjectSha(checkout, "HEAD"),
+      this.gitRemoteHead(checkout, branch),
+      this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: checkout }).then(result => result.stdout),
+      this.runDesktopProcess("git", ["rev-parse", remoteRef], { cwd: checkout }).then(result => result.stdout),
+      this.runDesktopProcess("git", ["rev-list", "--left-right", "--count", `HEAD...${remoteRef}`], { cwd: checkout }).then(result => result.stdout)
+    ]);
+    const relation = String(relationResult).split(/\s+/u).map(Number);
+    if (status || head !== LEGACY_PENDING.commit || parent !== LEGACY_PENDING.remoteBase || tree !== LEGACY_PENDING.tree || liveRemote !== LEGACY_PENDING.remoteBase || remoteTracking !== LEGACY_PENDING.remoteBase || relation[0] !== 1 || relation[1] !== 0) return null;
+    const registryBlob = await this.gitObjectSha(checkout, head, "registry.json");
+    if (registryBlob !== LEGACY_PENDING.registryBlob) return null;
+    const registry = await this.readGitJson(checkout, head, "registry.json");
+    const entry = registry.plugins?.find(plugin => plugin?.id === LEGACY_PENDING.pluginId);
+    if (!entry || String(entry.version) !== LEGACY_PENDING.version) return null;
+    const draft = await this.createPendingPublishDraft(checkout, repo, branch, LEGACY_PENDING.remoteBase, [entry]);
+    const transaction = await this.finalizePendingPublishJournal(checkout, draft, head);
+    if (!jsonValuesEqual(transaction.changedPaths, LEGACY_PENDING.changedPaths)) return null;
+    transaction.legacyRecovery = "f717861";
+    return transaction;
+  }
+
+  async assertLegacyRuntimeMatchesSnapshot(pending) {
+    const recorded = pending.transaction.plugins[0];
+    const runtimeDir = this.node.path.join(this.getDesktopVaultPath(), this.getConfigDirRel(), "plugins", recorded.id);
+    const manifest = await this.readDesktopJson(this.node.path.join(runtimeDir, "manifest.json"));
+    const installed = new Map([[recorded.id, {
+      id: recorded.id,
+      version: String(manifest.version),
+      dir: `${this.getConfigDirRel()}/plugins/${recorded.id}`
+    }]]);
+    const decision = await this.pendingRuntimeDecision(pending.projects[0], installed);
+    if (decision !== "noop" && decision !== "keep-newer-self-recovery") {
+      throw new Error(`${recorded.id}: legacy pending требует byte-identical snapshot runtime либо доказанную newer self-recovery version.`);
+    }
+    return decision;
+  }
+
+  async provePendingPublishCommit(checkout, repo, branch) {
+    const journal = await this.readPendingPublishJournal();
+    if (journal?.status === "preparing") return this.recoverCommittedPreparingTransaction(checkout, repo, branch, journal);
+    if (journal) return this.proveJournalPendingPublish(checkout, repo, branch, journal);
+    const legacy = await this.createLegacyPendingTransaction(checkout, repo, branch);
+    if (!legacy) throw new Error(`${repo}: локальный pending commit не имеет доказуемого transaction journal; STOP.`);
+    const proof = await this.proveJournalPendingPublish(checkout, repo, branch, legacy);
+    await this.assertLegacyRuntimeMatchesSnapshot(proof);
+    proof.legacy = true;
+    return proof;
   }
 
   async cloneGitCheckout(repo, branch, checkout) {
     await this.runDesktopProcess("git", ["clone", "--single-branch", "--branch", branch, this.expectedGitOrigin(repo), checkout]);
   }
 
-  async recreateDisposableCheckout(repo, branch, key, checkout) {
-    const { fsp, path } = this.node;
-    const root = this.getDesktopSyncRoot();
-    const nonce = `${stamp()}-${Date.now()}`;
-    const replacement = path.join(root, `.${key}.recovery-next-${nonce}`);
-    const recoveryRoot = path.join(root, "recovery");
-    const backup = path.join(recoveryRoot, `${key}-${nonce}`);
-    if (await this.desktopExists(replacement) || await this.desktopExists(backup)) {
-      throw new Error(`${repo}: не удалось выбрать безопасный путь recovery.`);
-    }
-
-    try {
-      await this.cloneGitCheckout(repo, branch, replacement);
-      await this.assertDisposableCheckoutIdentity(replacement, repo, branch);
-      const replacementStatus = await this.runDesktopProcess("git", ["status", "--porcelain"], { cwd: replacement });
-      if (replacementStatus.stdout) throw new Error("новый checkout неожиданно содержит изменения");
-      const [head, remote] = await Promise.all([
-        this.runDesktopProcess("git", ["rev-parse", "HEAD"], { cwd: replacement }),
-        this.runDesktopProcess("git", ["rev-parse", `origin/${branch}`], { cwd: replacement })
-      ]);
-      if (head.stdout !== remote.stdout) throw new Error("новый checkout не совпадает с origin");
-    } catch (error) {
-      try { await fsp.rm(replacement, { recursive: true, force: true }); } catch {}
-      throw new Error(`${repo}: безопасное пересоздание служебного checkout не удалось: ${error.message}`);
-    }
-
-    await fsp.mkdir(recoveryRoot, { recursive: true });
-    await fsp.rename(checkout, backup);
-    try {
-      await fsp.rename(replacement, checkout);
-    } catch (error) {
-      try { await fsp.rename(backup, checkout); } catch {}
-      try { await fsp.rm(replacement, { recursive: true, force: true }); } catch {}
-      throw new Error(`${repo}: не удалось активировать восстановленный checkout: ${error.message}`);
-    }
-    return checkout;
-  }
-
-  async ensureGitCheckout(repo, branch, key) {
+  async ensureGitCheckout(repo, branch, key, options = {}) {
     const { fsp, path } = this.node;
     const root = this.getDesktopSyncRoot();
     const checkout = path.join(root, key);
@@ -1165,11 +1504,9 @@ module.exports = class UpdaterPlugin extends Plugin {
       return checkout;
     }
     if (ahead > 0 && behind > 0) {
-      if (!(await this.localCheckoutHistoryIsSubsumed(checkout, remoteRef))) {
-        throw new Error(`${repo}: служебный checkout разошёлся с origin и содержит уникальную локальную историю; recovery остановлен без удаления данных.`);
-      }
-      return this.recreateDisposableCheckout(repo, branch, key, checkout);
+      throw new Error(`${repo}: служебный checkout разошёлся с origin и содержит уникальную локальную историю; recovery остановлен без удаления данных.`);
     }
+    if (ahead === 1 && behind === 0 && options.allowPendingPublish === true) return checkout;
     throw new Error(`${repo}: служебный checkout содержит локальные commits, отсутствующие на origin; recovery остановлен без удаления данных.`);
   }
 
@@ -1177,12 +1514,11 @@ module.exports = class UpdaterPlugin extends Plugin {
     return (await this.runDesktopProcess("git", ["rev-parse", "HEAD"], { cwd: checkout })).stdout;
   }
 
-  async pushAndVerify(checkout, branch) {
+  async pushAndVerify(checkout, branch, expectedRemoteBase = null) {
     const localSha = await this.gitHead(checkout);
+    if (expectedRemoteBase) await this.verifyRemoteHead(checkout, branch, expectedRemoteBase);
     await this.runDesktopProcess("git", ["push", "origin", `HEAD:${branch}`], { cwd: checkout });
-    const remote = await this.runDesktopProcess("git", ["ls-remote", "origin", `refs/heads/${branch}`], { cwd: checkout });
-    const remoteSha = String(remote.stdout || "").split(/\s+/u)[0];
-    if (remoteSha !== localSha) throw new Error(`Push не подтверждён: local ${localSha}, remote ${remoteSha || "нет SHA"}.`);
+    await this.verifyRemoteHead(checkout, branch, localSha);
     return localSha;
   }
 
@@ -1711,9 +2047,123 @@ module.exports = class UpdaterPlugin extends Plugin {
     return `dev → GitHub: ${summary.devToGithub}\nGitHub → dev: ${summary.githubToDev}\nruntime обновлено: ${summary.runtime}\niPhone зеркало: ${summary.iphone}\nконфликтов: ${summary.conflicts}`;
   }
 
+  async runtimeProjectsNeedingUpdate(projects) {
+    const installed = await this.readInstalledPlugins();
+    const result = [];
+    for (const project of projects) {
+      if (await this.runtimeProjectNeedsUpdate(project, installed)) result.push(project);
+    }
+    return result;
+  }
+
+  async pendingRuntimeDecision(project, installed) {
+    const recorded = project.transactionPlugin;
+    const local = installed.get(project.id) || null;
+    if (!local) return "install";
+    const localDir = this.node.path.join(this.getDesktopVaultPath(), ...String(local.dir).split("/"));
+    const localFiles = await this.existingRuntimeFiles(localDir).catch(() => []);
+    const sameFiles = jsonValuesEqual(localFiles, recorded.runtimeFiles);
+    const localHash = sameFiles ? await this.hashRuntime(localDir, localFiles) : "";
+    const order = compareVersions(String(local.version), String(project.version));
+    if (order === 0) {
+      if (sameFiles && localHash === recorded.runtimeHash) return "noop";
+      throw new Error(`${project.id}: runtime той же версии отличается от verified pending snapshot; STOP.`);
+    }
+    if (order < 0) return "install";
+    if (project.id !== "updater-plugin") {
+      throw new Error(`${project.id}: runtime новее pending snapshot; автоматический downgrade запрещён.`);
+    }
+
+    const canonical = (await this.listDevProjects()).find(item => item.id === project.id);
+    if (!canonical || compareVersions(canonical.version, project.version) <= 0 || String(canonical.version) !== String(local.version)) {
+      throw new Error(`${project.id}: newer runtime не является ожидаемой canonical recovery-version; STOP.`);
+    }
+    const canonicalFiles = await this.existingRuntimeFiles(canonical.dir);
+    if (!jsonValuesEqual(canonicalFiles, localFiles)) {
+      throw new Error(`${project.id}: newer recovery runtime имеет неизвестный набор файлов; STOP.`);
+    }
+    const canonicalHash = await this.hashRuntime(canonical.dir, canonicalFiles);
+    if (canonicalHash !== localHash) {
+      throw new Error(`${project.id}: newer recovery runtime не совпадает с canonical recovery snapshot; STOP.`);
+    }
+    return "keep-newer-self-recovery";
+  }
+
+  async reconcilePendingRuntime(pending) {
+    const installed = await this.readInstalledPlugins();
+    const decisions = [];
+    for (const project of pending.projects) decisions.push([project, await this.pendingRuntimeDecision(project, installed)]);
+    let updated = 0;
+    for (const [project, decision] of decisions) {
+      if (decision !== "install") continue;
+      const info = await this.runtimeInfoFromDev(project, installed);
+      const ok = info.local ? await this.installPreparedPlugin(info) : await this.installNewPlugin(info);
+      if (ok) updated++;
+    }
+    return { updated, decisions: decisions.map(([project, decision]) => ({ id: project.id, version: project.version, decision })) };
+  }
+
+  async canonicalNewerThanPending(pending) {
+    const canonical = new Map((await this.listDevProjects()).map(project => [project.id, project]));
+    return pending.projects
+      .map(project => ({ pending: project, canonical: canonical.get(project.id) }))
+      .filter(item => item.canonical && compareVersions(item.canonical.version, item.pending.version) > 0)
+      .map(item => ({ id: item.pending.id, pendingVersion: item.pending.version, canonicalVersion: item.canonical.version }));
+  }
+
+  async resumePendingPublish(pending) {
+    if (!(await this.assertUpdateUnlocked(true))) return null;
+    const backup = await this.createVaultBackup();
+    if (!backup) return null;
+    if (!(await this.assertUpdateUnlocked(true))) return null;
+
+    if (pending.legacy) await this.writePendingPublishJournal(pending.transaction);
+    const mainSha = pending.remoteAlreadyPublished
+      ? await this.verifyRemoteHead(pending.checkout, pending.branch, pending.commit)
+      : await this.pushAndVerify(pending.checkout, pending.branch, pending.remoteBase);
+    const reconciled = await this.reconcilePendingRuntime(pending);
+    await this.removePendingPublishJournal();
+    const newerCanonical = await this.canonicalNewerThanPending(pending);
+
+    const summary = {
+      devToGithub: pending.projects.length,
+      githubToDev: 0,
+      runtime: reconciled.updated,
+      iphone: 0,
+      conflicts: 0,
+      mainSha,
+      iphoneSha: "",
+      resumedPending: true,
+      remoteAlreadyPublished: pending.remoteAlreadyPublished,
+      newerCanonical,
+      requiresAnotherPublish: newerCanonical.length > 0,
+      runtimeDecisions: reconciled.decisions
+    };
+    const followUp = newerCanonical.length
+      ? `\nСтарый pending publish завершён. Canonical dev новее (${newerCanonical.map(item => `${item.id} ${item.pendingVersion} → ${item.canonicalVersion}`).join(", ")}); нажмите P ещё раз для новой отдельной публикации.`
+      : "";
+    new Notice(this.formatDesktopSyncSummary(summary) + followUp, 18000);
+    if (reconciled.updated > 0) setTimeout(() => {
+      try { window.location.reload(); }
+      catch { new Notice("Изменения записаны. Перезапусти Obsidian вручную один раз.", 10000); }
+    }, 700);
+    return summary;
+  }
+
   async safeDesktopSynchronizeAll() {
     const branch = this.settings.registryBranch || "centralize-plugins";
-    const checkout = await this.ensureGitCheckout(MAIN_REGISTRY_REPO, branch, "main");
+    const checkout = await this.ensureGitCheckout(MAIN_REGISTRY_REPO, branch, "main", { allowPendingPublish: true });
+    const [checkoutHead, remoteBase, journal] = await Promise.all([
+      this.gitHead(checkout),
+      this.runDesktopProcess("git", ["rev-parse", `origin/${branch}`], { cwd: checkout }).then(result => result.stdout),
+      this.readPendingPublishJournal()
+    ]);
+    if (journal || checkoutHead !== remoteBase) {
+      const pending = await this.provePendingPublishCommit(checkout, MAIN_REGISTRY_REPO, branch);
+      return this.resumePendingPublish(pending);
+    }
+    await this.verifyRemoteHead(checkout, branch, remoteBase);
+
     const plan = await this.buildDesktopSyncPlan(checkout);
     const conflicts = plan.items.filter(item => item.decision === "conflict");
     const blocked = plan.items.filter(item => item.decision === "blocked");
@@ -1756,27 +2206,50 @@ module.exports = class UpdaterPlugin extends Plugin {
 
     const { file: registryFile, registry } = await this.readCheckoutRegistry(checkout);
     let mainSha = await this.gitHead(checkout);
+    let outgoingPending = null;
     if (preparedOutgoing.length) {
       registry.schemaVersion = 2;
       const registryById = new Map(registry.plugins.map(entry => [String(entry.id), entry]));
+      const draft = await this.createCanonicalPublishDraft(MAIN_REGISTRY_REPO, branch, remoteBase, preparedOutgoing);
+      await this.writePendingPublishJournal(draft);
+      const recordedById = new Map(draft.plugins.map(plugin => [plugin.id, plugin.registryEntry]));
       for (const item of preparedOutgoing) {
         const nextEntry = await this.stageMainRepositoryPlugin(checkout, item.project, item.entry);
+        if (!jsonValuesEqual(nextEntry, recordedById.get(item.project.id))) {
+          throw new Error(`${item.project.id}: staged checkout не совпадает с immutable canonical transaction snapshot.`);
+        }
         registryById.set(item.project.id, nextEntry);
       }
       registry.plugins = Array.from(registryById.values()).sort((a, b) => String(a.id).localeCompare(String(b.id), "en"));
       await this.writeDesktopJsonAtomic(registryFile, registry);
       const commit = await this.commitCheckout(checkout, `Sync plugins: ${preparedOutgoing.map(item => item.project.id).join(", ")}`);
-      if (commit) mainSha = await this.pushAndVerify(checkout, branch);
+      if (commit) {
+        const transaction = await this.finalizePendingPublishJournal(checkout, draft, commit);
+        await this.writePendingPublishJournal(transaction);
+        mainSha = await this.pushAndVerify(checkout, branch, remoteBase);
+        outgoingPending = await this.proveJournalPendingPublish(checkout, MAIN_REGISTRY_REPO, branch, transaction);
+      } else {
+        await this.removePendingPublishJournal();
+      }
     }
+
+    await this.verifyRemoteHead(checkout, branch, mainSha);
 
     const appliedIncoming = [];
     for (const item of preparedIncoming) appliedIncoming.push(await this.applyIncomingProject(item));
     const finalProjects = new Map((await this.listDevProjects()).map(project => [project.id, project]));
     for (const project of appliedIncoming) finalProjects.set(project.id, project);
-    const runtimeCandidates = [...preparedOutgoing.map(item => finalProjects.get(item.project.id)), ...appliedIncoming, ...runtimeDrift];
+    let runtime = 0;
+    const outgoingIds = new Set(preparedOutgoing.map(item => item.project.id));
+    if (outgoingPending) {
+      const reconciled = await this.reconcilePendingRuntime(outgoingPending);
+      runtime += reconciled.updated;
+      await this.removePendingPublishJournal();
+    }
+    const runtimeCandidates = [...appliedIncoming, ...runtimeDrift.filter(project => !outgoingIds.has(project.id))];
     for (const item of synchronized) runtimeCandidates.push(finalProjects.get(item.project.id));
     const uniqueRuntime = Array.from(new Map(runtimeCandidates.filter(Boolean).map(project => [project.id, project])).values());
-    const runtime = await this.updateRuntimeFromProjects(uniqueRuntime);
+    runtime += await this.updateRuntimeFromProjects(uniqueRuntime);
 
     let iphone = 0;
     let iphoneSha = "";
