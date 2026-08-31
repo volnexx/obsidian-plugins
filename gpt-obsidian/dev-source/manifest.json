@@ -1,9 +1,9 @@
 {
   "id": "gpt-obsidian",
   "name": "GPT Obsidian",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "minAppVersion": "1.8.0",
-  "description": "Integrates ChatGPT Web viewer tabs with Obsidian hotkeys, prompt autofocus, theme styling, and Copilot permission bridging.",
+  "description": "Integrates ChatGPT Web Viewer tabs with prompt autofocus, theme styling, and Copilot permission bridging.",
   "author": "volnexx",
   "isDesktopOnly": true
 }

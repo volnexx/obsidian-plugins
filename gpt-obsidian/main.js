@@ -307,35 +307,6 @@ function isBridgeDecisionAllowed(optionId, request, allowPermanentApprovals) {
   return bridgeDecisionPolicy(optionId, request, allowPermanentApprovals).allowed;
 }
 
-const CODE_TO_KEY = {
-  Backquote: "`",
-  Minus: "-",
-  Equal: "=",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Semicolon: ";",
-  Quote: "'",
-  Comma: ",",
-  Period: ".",
-  Slash: "/",
-  Space: "space",
-  Enter: "enter",
-  Tab: "tab",
-  Escape: "escape",
-  Backspace: "backspace",
-  Delete: "delete",
-  Insert: "insert",
-  Home: "home",
-  End: "end",
-  PageUp: "pageup",
-  PageDown: "pagedown",
-  ArrowUp: "arrowup",
-  ArrowDown: "arrowdown",
-  ArrowLeft: "arrowleft",
-  ArrowRight: "arrowright"
-};
-
 const FOCUS_PROMPT_SCRIPT = String.raw`(() => {
   const visible = (el) => {
     if (!el) return false;
@@ -382,110 +353,6 @@ const FOCUS_PROMPT_SCRIPT = String.raw`(() => {
 
   return document.activeElement === input || input.contains(document.activeElement);
 })()`;
-
-const COMPOSER_KEYBOARD_DIAGNOSTIC_SCRIPT = String.raw`(() => {
-  // __gptObsidianComposerKeyboardDiagnostic
-  const candidates = [
-    document.querySelector('#prompt-textarea'),
-    document.querySelector('[data-testid="prompt-textarea"]'),
-    ...document.querySelectorAll('textarea')
-  ].filter(Boolean);
-  const composer = candidates.find((candidate) => {
-    const style = window.getComputedStyle(candidate);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    const rect = candidate.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }) || candidates[0] || null;
-  const active = document.activeElement;
-  const value = composer
-    ? (composer.isContentEditable ? composer.textContent : composer.value)
-    : '';
-  return {
-    composerFound: Boolean(composer),
-    composerFocused: Boolean(composer && (active === composer || composer.contains(active))),
-    composerTextLength: String(value || '').length,
-    composerContentEditable: Boolean(composer?.isContentEditable),
-    activeTag: active?.tagName || null,
-    activeContentEditable: Boolean(active?.isContentEditable)
-  };
-})()`;
-
-function normalizeKey(value) {
-  if (value == null) return "";
-  const key = String(value).toLowerCase();
-  if (key === " " || key === "spacebar") return "space";
-  if (key === "esc") return "escape";
-  if (key === "return") return "enter";
-  if (key === "del") return "delete";
-  return key;
-}
-
-function keyCandidates(input) {
-  const result = new Set();
-  const direct = normalizeKey(input.key);
-  if (direct) result.add(direct);
-
-  const code = String(input.code || "");
-  const letter = /^Key([A-Z])$/.exec(code);
-  if (letter) result.add(letter[1].toLowerCase());
-
-  const digit = /^Digit([0-9])$/.exec(code);
-  if (digit) result.add(digit[1]);
-
-  const numpad = /^Numpad([0-9])$/.exec(code);
-  if (numpad) result.add(numpad[1]);
-
-  const mapped = CODE_TO_KEY[code];
-  if (mapped) result.add(normalizeKey(mapped));
-
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) {
-    result.add(code.toLowerCase());
-  }
-
-  return result;
-}
-
-function isMacPlatform() {
-  return process.platform === "darwin";
-}
-
-function hotkeyMatchesInput(hotkey, input) {
-  if (!hotkey || !hotkey.key) return false;
-
-  const expected = { ctrl: false, meta: false, alt: false, shift: false };
-
-  for (const rawModifier of hotkey.modifiers || []) {
-    const modifier = String(rawModifier).toLowerCase();
-    if (modifier === "mod") {
-      if (isMacPlatform()) expected.meta = true;
-      else expected.ctrl = true;
-    } else if (modifier === "ctrl" || modifier === "control") {
-      expected.ctrl = true;
-    } else if (modifier === "meta" || modifier === "cmd" || modifier === "command") {
-      expected.meta = true;
-    } else if (modifier === "alt" || modifier === "option") {
-      expected.alt = true;
-    } else if (modifier === "shift") {
-      expected.shift = true;
-    }
-  }
-
-  if (Boolean(input.control) !== expected.ctrl) return false;
-  if (Boolean(input.meta) !== expected.meta) return false;
-  if (Boolean(input.alt) !== expected.alt) return false;
-  if (Boolean(input.shift) !== expected.shift) return false;
-
-  return keyCandidates(input).has(normalizeKey(hotkey.key));
-}
-
-function isPotentialObsidianShortcut(input) {
-  if (!input || input.type !== "keyDown" || input.isComposing) return false;
-  if (input.control || input.meta || input.alt) return true;
-
-  const key = normalizeKey(input.key);
-  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return true;
-  return ["escape", "insert", "delete", "home", "end", "pageup", "pagedown"].includes(key);
-}
 
 function isChatGptUrl(value) {
   if (!value) return false;
@@ -690,7 +557,6 @@ class GptObsidianPlugin extends Plugin {
     this.activationSerial = 0;
     this.boundWebviews = new Map();
     this.destroyedWebviews = new WeakSet();
-    this.guestBindings = new Map();
     this.remote = null;
     this.warnedRemote = false;
     this.themeRefreshTimer = null;
@@ -768,14 +634,10 @@ class GptObsidianPlugin extends Plugin {
     for (const [webview, binding] of this.boundWebviews) {
       try {
         webview.removeEventListener("dom-ready", binding.domReady);
-        webview.removeEventListener("did-attach", binding.didAttach);
         webview.removeEventListener("did-navigate", binding.navigated);
         webview.removeEventListener("did-navigate-in-page", binding.navigatedInPage);
-        webview.removeEventListener("focus", binding.focused);
-        webview.removeEventListener("blur", binding.blurred);
         webview.removeEventListener("destroyed", binding.destroyed);
       } catch (_) {}
-      this.releaseGuestKeyboard(webview);
     }
     this.boundWebviews.clear();
     this.stopBridgeSessionWatch();
@@ -797,9 +659,6 @@ class GptObsidianPlugin extends Plugin {
     this.bridgeBindings.clear();
     this.bridgeBindingsByLeafId.clear();
 
-    for (const [id, binding] of [...this.guestBindings]) {
-      this.detachGuestBinding(id, binding);
-    }
   }
 
   async saveSettings() {
@@ -963,7 +822,6 @@ class GptObsidianPlugin extends Plugin {
     if (!webview || !this.isChatGptWebview(webview)) return;
 
     this.bindWebview(webview);
-    this.ensureGuestKeyboardAttached(webview);
     this.applyAppearance(webview);
     this.schedulePromptFocus(webview, serial);
   }
@@ -1001,25 +859,17 @@ class GptObsidianPlugin extends Plugin {
 
   bindWebview(webview) {
     if (this.destroyedWebviews.has(webview)) return;
-    if (this.boundWebviews.has(webview)) {
-      this.ensureGuestKeyboardAttached(webview);
-      return;
-    }
+    if (this.boundWebviews.has(webview)) return;
 
     const binding = {
       domReady: null,
-      didAttach: null,
       navigated: null,
       navigatedInPage: null,
-      focused: null,
-      blurred: null,
-      destroyed: null,
-      guestId: null
+      destroyed: null
     };
 
     const domReady = () => {
       this.bridgeBindingFor(webview);
-      this.ensureGuestKeyboardAttached(webview);
       this.applyAppearance(webview);
 
       const activeWebview = this.getWebview(this.app.workspace.activeLeaf);
@@ -1049,7 +899,6 @@ class GptObsidianPlugin extends Plugin {
       this.cancelBridgePending(bridge);
       if (bridge?.enabled) this.setBridgeStatus(bridge, "ON", bridge.sessionId);
       if (this.isChatGptWebview(webview)) {
-        this.ensureGuestKeyboardAttached(webview);
         this.applyAppearance(webview);
       } else {
         this.disableBridgeBinding(this.bridgeBindings.get(webview), "OFF (navigation)");
@@ -1094,582 +943,25 @@ class GptObsidianPlugin extends Plugin {
       if (pending && !pendingPreserved) this.cancelBridgePending(bridge);
       if (bridge?.enabled && !bridge.pending) this.setBridgeStatus(bridge, "ON", bridge.sessionId);
       if (this.isChatGptWebview(webview)) {
-        this.ensureGuestKeyboardAttached(webview);
         this.applyAppearance(webview);
       }
     };
 
-    const didAttach = () => this.ensureGuestKeyboardAttached(webview);
-    const focused = () => this.ensureGuestKeyboardAttached(webview);
-    const blurred = () => this.ensureGuestKeyboardAttached(webview);
     const destroyed = () => this.removeWebviewBinding(webview);
 
     Object.assign(binding, {
       domReady,
-      didAttach,
       navigated,
       navigatedInPage,
-      focused,
-      blurred,
       destroyed
     });
 
     webview.addEventListener("dom-ready", domReady);
-    webview.addEventListener("did-attach", didAttach);
     webview.addEventListener("did-navigate", navigated);
     webview.addEventListener("did-navigate-in-page", navigatedInPage);
-    webview.addEventListener("focus", focused);
-    webview.addEventListener("blur", blurred);
     webview.addEventListener("destroyed", destroyed);
     this.boundWebviews.set(webview, binding);
     this.bridgeBindingFor(webview);
-    this.ensureGuestKeyboardAttached(webview);
-  }
-
-  ensureGuestKeyboardAttached(webview) {
-    if (!this.remote || !this.isChatGptWebview(webview)) return;
-    if (typeof webview.getWebContentsId !== "function") return;
-
-    let id;
-    let webContents;
-    try {
-      id = webview.getWebContentsId();
-      if (!id) return;
-      webContents = this.remote.webContents.fromId(id);
-    } catch (error) {
-      this.warnRemote(error);
-      return;
-    }
-
-    if (!webContents || webContents.isDestroyed?.()) return;
-    const webviewBinding = this.boundWebviews.get(webview);
-    if (!webviewBinding) return;
-
-    if (webviewBinding.guestId && webviewBinding.guestId !== id) {
-      this.releaseGuestKeyboard(webview);
-    }
-
-    const existing = this.guestBindings.get(id);
-    if (existing && existing.webContents === webContents && !webContents.isDestroyed?.()) {
-      existing.webviews.add(webview);
-      webviewBinding.guestId = id;
-      this.reconcileGuestKeyboardBinding(existing);
-      return;
-    }
-
-    if (existing) this.detachGuestBinding(id, existing);
-
-    const binding = {
-      id,
-      webContents,
-      beforeInput: null,
-      beforeInputProbe: null,
-      inputEvent: null,
-      destroyed: null,
-      newListener: null,
-      removeListener: null,
-      changingFallback: false,
-      lastCoreDispatchVerified: false,
-      lastDispatchOwner: null,
-      webviews: new Set([webview])
-    };
-
-    const beforeInput = (event, input) => {
-      // Retained only for cleanup/backward-compatible binding identity. The
-      // always-attached probe below is now the sole event arbiter.
-      return this.handleGuestInput(event, input);
-    };
-
-    const beforeInputProbe = (event, input) => {
-      this.beginGuestKeyboardProbe(binding, event, input);
-    };
-
-    const inputEvent = (_event, input) => {
-      if (input?.type === "mouseDown") void this.traceGuestFocusBoundary(binding, input);
-      else void this.traceGuestKeyboardInput(binding, input);
-    };
-
-    const newListener = (eventName, listener) => {
-      if (eventName !== "before-input-event" || listener === beforeInput || listener === beforeInputProbe) return;
-      // Presence is diagnostic data only. A listener does not become the owner
-      // until it actually dispatches this physical event through app.keymap.
-    };
-
-    const removeListener = (eventName) => {
-      if (eventName !== "before-input-event" || binding.changingFallback) return;
-      // The plugin arbiter is independent from late core listener churn.
-      this.reconcileGuestKeyboardBinding(binding);
-    };
-
-    const destroyed = () => {
-      const current = this.guestBindings.get(id);
-      if (!current || current.webContents !== webContents) return;
-      const owners = [...current.webviews];
-      this.detachGuestBinding(id, current);
-      for (const owner of owners) {
-        const ownerBinding = this.boundWebviews.get(owner);
-        if (ownerBinding?.guestId === id) ownerBinding.guestId = null;
-        const bridge = this.bridgeBindings.get(owner);
-        if (bridge?.guestWebContents === webContents) {
-          bridge.guestWebContents = null;
-          bridge.guestWebContentsId = null;
-          bridge.guestBackgroundThrottling = null;
-        }
-        const replacement = bridge && this.refreshBridgeEndpoint(bridge);
-        if (!replacement) {
-          this.cancelBridgePending(bridge);
-          if (bridge?.enabled) this.setBridgeStatus(bridge, "ON", bridge.sessionId);
-        }
-      }
-    };
-
-    Object.assign(binding, { beforeInput, beforeInputProbe, inputEvent, destroyed, newListener, removeListener });
-    this.guestBindings.set(id, binding);
-    webContents.prependListener("before-input-event", beforeInputProbe);
-    webContents.on("newListener", newListener);
-    webContents.on("removeListener", removeListener);
-    webContents.on("input-event", inputEvent);
-    webContents.once("destroyed", destroyed);
-    webviewBinding.guestId = id;
-    this.reconcileGuestKeyboardBinding(binding);
-  }
-
-  coreWebViewerCanConfigureGuestKeyboard(webview) {
-    const leaf = this.findLeafForWebview(webview);
-    const view = leaf?.view;
-    return Boolean(
-      view && this.getWebview(leaf) === webview &&
-      typeof view.configureWebContents === "function"
-    );
-  }
-
-  beforeInputListeners(webContents) {
-    if (!webContents || typeof webContents.listeners !== "function") return [];
-    try {
-      return webContents.listeners("before-input-event");
-    } catch (_) {
-      return [];
-    }
-  }
-
-  coreWebViewerHasKeyboardListener(webview, webContents, pluginListener = null, diagnosticListener = null) {
-    if (!this.coreWebViewerCanConfigureGuestKeyboard(webview)) return false;
-    return this.beforeInputListeners(webContents).some((listener) =>
-      listener !== pluginListener && listener !== diagnosticListener
-    );
-  }
-
-  guestHasCoreKeyboardOwner(binding) {
-    return [...binding.webviews].some((webview) =>
-      this.coreWebViewerCanConfigureGuestKeyboard(webview)
-    );
-  }
-
-  guestHasCoreKeyboardBridge(binding) {
-    return Boolean(binding.lastCoreDispatchVerified) && [...binding.webviews].some((webview) =>
-      this.coreWebViewerHasKeyboardListener(
-        webview,
-        binding.webContents,
-        binding.beforeInput,
-        binding.beforeInputProbe
-      )
-    );
-  }
-
-  setGuestKeyboardFallback(binding, active) {
-    if (!binding || binding.webContents.isDestroyed?.()) return;
-    const listeners = this.beforeInputListeners(binding.webContents);
-    const attached = listeners.includes(binding.beforeInput);
-    if (active === attached) return;
-    binding.changingFallback = true;
-    try {
-      if (active) binding.webContents.on("before-input-event", binding.beforeInput);
-      else binding.webContents.removeListener("before-input-event", binding.beforeInput);
-    } finally {
-      binding.changingFallback = false;
-    }
-  }
-
-  reconcileGuestKeyboardBinding(binding) {
-    if (!binding || this.guestBindings.get(binding.id) !== binding) return;
-    if (binding.webviews.size === 0 || binding.webContents.isDestroyed?.()) return;
-    const listeners = this.beforeInputListeners(binding.webContents);
-    if (!listeners.includes(binding.beforeInputProbe)) {
-      binding.webContents.prependListener("before-input-event", binding.beforeInputProbe);
-    }
-    // The probe is the single deterministic arbiter. The old synchronous
-    // fallback must never coexist with it as a second command dispatcher.
-    this.setGuestKeyboardFallback(binding, false);
-  }
-
-  activeKeyboardDispatchPathCount(webview) {
-    const id = this.boundWebviews.get(webview)?.guestId;
-    const binding = id ? this.guestBindings.get(id) : null;
-    if (!binding) return 0;
-    const listeners = this.beforeInputListeners(binding.webContents);
-    return listeners.includes(binding.beforeInputProbe) ? 1 : 0;
-  }
-
-  matchingObsidianHotkeyCommands(input) {
-    if (!isPotentialObsidianShortcut(input)) return [];
-    const commandsApi = this.app.commands;
-    const hotkeyManager = this.app.hotkeyManager;
-    const commands = commandsApi?.commands;
-    if (!hotkeyManager || !commands) return [];
-    return Object.keys(commands).filter((commandId) =>
-      this.getEffectiveHotkeys(hotkeyManager, commandId)
-        .some((hotkey) => hotkeyMatchesInput(hotkey, input))
-    );
-  }
-
-  matchingTabHotkeyCommands(input) {
-    return this.matchingObsidianHotkeyCommands(input).filter((commandId) =>
-      commandId === "workspace:next-tab" || commandId === "workspace:previous-tab"
-    );
-  }
-
-  keyboardOwnershipSnapshot(binding) {
-    const listeners = this.beforeInputListeners(binding.webContents);
-    const fallbackAttached = listeners.includes(binding.beforeInput);
-    const diagnosticAttached = listeners.includes(binding.beforeInputProbe);
-    const owners = [...binding.webviews];
-    const ownerLeaves = owners.map((webview) => this.findLeafForWebview(webview)).filter(Boolean);
-    const activeLeaf = this.app.workspace.activeLeaf || null;
-    const coreListenerCount = this.guestHasCoreKeyboardOwner(binding)
-      ? listeners.filter((listener) =>
-        listener !== binding.beforeInput && listener !== binding.beforeInputProbe
-      ).length
-      : 0;
-    const pluginDispatcherAttached = listeners.includes(binding.beforeInputProbe);
-    return {
-      fallbackAttached,
-      diagnosticAttached,
-      pluginDispatcherAttached,
-      coreListenerPresent: coreListenerCount > 0,
-      coreBridgePresent: Boolean(binding.lastCoreDispatchVerified),
-      coreDispatchVerified: Boolean(binding.lastCoreDispatchVerified),
-      coreListenerCount,
-      ownershipDetection: pluginDispatcherAttached ? "plugin-arbiter" : "none",
-      activeDispatchPathCount: pluginDispatcherAttached ? 1 : 0,
-      beforeInputListenerCount: listeners.length,
-      webContentsFocused: typeof binding.webContents.isFocused === "function"
-        ? Boolean(binding.webContents.isFocused())
-        : null,
-      hostWebviewFocused: owners.some((webview) => webview?.ownerDocument?.activeElement === webview),
-      activeLeafId: activeLeaf?.id || null,
-      ownerLeafIds: ownerLeaves.map((leaf) => leaf.id || null),
-      activeLeafIsOwner: ownerLeaves.includes(activeLeaf)
-    };
-  }
-
-  keyboardInputSnapshot(input) {
-    return {
-      key: input?.key || null,
-      code: input?.code || null,
-      control: Boolean(input?.control),
-      alt: Boolean(input?.alt),
-      meta: Boolean(input?.meta),
-      shift: Boolean(input?.shift),
-      isComposing: Boolean(input?.isComposing),
-      isAutoRepeat: Boolean(input?.isAutoRepeat)
-    };
-  }
-
-  recordKeyboardDiagnostic(entry) {
-    this.keyboardDiagnosticTrace ||= { entries: [] };
-    this.keyboardDiagnosticTrace.entries.push(entry);
-    if (this.keyboardDiagnosticTrace.entries.length > 200) this.keyboardDiagnosticTrace.entries.shift();
-    globalThis.__GPT_OBSIDIAN_KEYBOARD_TRACE__ = this.keyboardDiagnosticTrace;
-    console.info("[GPT Obsidian][keyboard diagnostic]", entry);
-  }
-
-  activeLeafOwnsGuestBinding(binding) {
-    const activeLeaf = this.app.workspace.activeLeaf || null;
-    if (!activeLeaf) return true;
-    return [...binding.webviews].some((webview) => this.findLeafForWebview(webview) === activeLeaf);
-  }
-
-  dispatchMatchedGuestCommand(probe) {
-    const commandsApi = this.app.commands;
-    if (!commandsApi || typeof commandsApi.executeCommandById !== "function") {
-      return { attempted: false, handled: false, commandId: null };
-    }
-    probe.pluginDispatching = true;
-    try {
-      for (const commandId of probe.matchingCommands) {
-        probe.pluginDispatchAttemptCount += 1;
-        let handled = false;
-        try {
-          handled = Boolean(commandsApi.executeCommandById(commandId));
-        } catch (error) {
-          console.error(`[GPT Obsidian] Failed to execute command ${commandId}:`, error);
-        }
-        if (handled) return { attempted: true, handled: true, commandId };
-      }
-      return { attempted: probe.pluginDispatchAttemptCount > 0, handled: false, commandId: null };
-    } finally {
-      probe.pluginDispatching = false;
-    }
-  }
-
-  beginGuestKeyboardProbe(binding, event, input) {
-    if (!binding || input?.type !== "keyDown") return;
-    const matchingCommands = this.matchingObsidianHotkeyCommands(input);
-    if (matchingCommands.length === 0) {
-      if (isPotentialObsidianShortcut(input)) queueMicrotask(() => this.recordKeyboardDiagnostic({
-        at: new Date().toISOString(),
-        phase: "before-input-event",
-        guestWebContentsId: binding.id,
-        physicalInputReceived: true,
-        matchingCommands: [],
-        input: this.keyboardInputSnapshot(input),
-        beforeInputReached: true,
-        electronDefaultPrevented: Boolean(event?.defaultPrevented),
-        dispatchOwner: "browser",
-        dispatchAttemptCount: 0,
-        keymapReached: false,
-        keymapCallCount: 0,
-        keymapCalls: [],
-        executeCommandCalls: [],
-        commandMatched: false,
-        duplicateSuppressed: false,
-        finalHandledBy: "browser",
-        ...this.keyboardOwnershipSnapshot(binding)
-      }));
-      return;
-    }
-    if (event?.defaultPrevented) {
-      queueMicrotask(() => this.recordKeyboardDiagnostic({
-        at: new Date().toISOString(),
-        phase: "before-input-event",
-        guestWebContentsId: binding.id,
-        physicalInputReceived: true,
-        matchingCommands,
-        input: this.keyboardInputSnapshot(input),
-        beforeInputReached: true,
-        electronDefaultPrevented: Boolean(event?.defaultPrevented),
-        dispatchOwner: "external",
-        dispatchAttemptCount: 0,
-        keymapReached: false,
-        keymapCallCount: 0,
-        keymapCalls: [],
-        executeCommandCalls: [],
-        commandMatched: false,
-        duplicateSuppressed: false,
-        finalHandledBy: "external",
-        ignoredReason: "physical input was already prevented before plugin arbitration",
-        ...this.keyboardOwnershipSnapshot(binding)
-      }));
-      return;
-    }
-    if (this.keyboardKeyProbe) this.finishGuestKeyboardProbe(this.keyboardKeyProbe);
-    event?.preventDefault?.();
-
-    const keymap = this.app.keymap;
-    const commandsApi = this.app.commands;
-    const originalOnKeyEvent = typeof keymap?.onKeyEvent === "function" ? keymap.onKeyEvent : null;
-    const originalExecuteCommandById = typeof commandsApi?.executeCommandById === "function"
-      ? commandsApi.executeCommandById
-      : null;
-    const probe = {
-      binding,
-      event,
-      input,
-      matchingCommands,
-      activeLeafOwner: this.activeLeafOwnsGuestBinding(binding),
-      startedAt: Date.now(),
-      originalOnKeyEvent,
-      originalExecuteCommandById,
-      keymapWrapper: null,
-      commandWrapper: null,
-      keymapCalls: [],
-      commandCalls: [],
-      pluginDispatching: false,
-      pluginDispatchAttemptCount: 0,
-      finished: false
-    };
-
-    if (originalOnKeyEvent) {
-      probe.keymapWrapper = function keyboardDiagnosticOnKeyEvent(keyboardEvent) {
-        let result;
-        let thrown = null;
-        try {
-          result = probe.activeLeafOwner
-            ? originalOnKeyEvent.call(this, keyboardEvent)
-            : undefined;
-          return result;
-        } catch (error) {
-          thrown = String(error);
-          throw error;
-        } finally {
-          probe.keymapCalls.push({
-            source: probe.pluginDispatching ? "plugin" : "core",
-            result: result === undefined ? "undefined" : String(result),
-            defaultPrevented: Boolean(keyboardEvent?.defaultPrevented),
-            code: keyboardEvent?.code || null,
-            key: keyboardEvent?.key || null,
-            suppressed: !probe.activeLeafOwner,
-            thrown
-          });
-        }
-      };
-      keymap.onKeyEvent = probe.keymapWrapper;
-    }
-    if (originalExecuteCommandById) {
-      probe.commandWrapper = function keyboardDiagnosticExecuteCommand(commandId, ...args) {
-        const source = probe.pluginDispatching ? "plugin" : "core";
-        const suppressed = source === "core" && !probe.activeLeafOwner;
-        const result = suppressed ? false : originalExecuteCommandById.call(this, commandId, ...args);
-        probe.commandCalls.push({
-          source,
-          commandId,
-          result: Boolean(result),
-          suppressed
-        });
-        return result;
-      };
-      commandsApi.executeCommandById = probe.commandWrapper;
-    }
-    this.keyboardKeyProbe = probe;
-    queueMicrotask(() => {
-      if (this.keyboardKeyProbe === probe) this.finishGuestKeyboardProbe(probe);
-    });
-  }
-
-  finishGuestKeyboardProbe(probe) {
-    if (!probe || probe.finished) return;
-    probe.finished = true;
-    if (this.keyboardKeyProbe === probe) this.keyboardKeyProbe = null;
-    const coreCommandCalls = probe.commandCalls.filter((call) => call.source === "core");
-    const coreKeymapCalls = probe.keymapCalls.filter((call) => call.source === "core");
-    const coreHandled = coreKeymapCalls.some((call) =>
-      call.result === "false" || call.defaultPrevented
-    ) || coreCommandCalls.some((call) =>
-      probe.matchingCommands.includes(call.commandId) && !call.suppressed
-    );
-    const coreAttempted = coreKeymapCalls.length > 0 || coreCommandCalls.length > 0;
-    const pluginResult = coreHandled || !probe.activeLeafOwner
-      ? { attempted: false, handled: false, commandId: null }
-      : this.dispatchMatchedGuestCommand(probe);
-    const finalHandledBy = !probe.activeLeafOwner
-      ? "suppressed-inactive-owner"
-      : (coreHandled ? "core" : (pluginResult.handled ? "plugin" : "none"));
-    probe.binding.lastCoreDispatchVerified = coreHandled;
-    probe.binding.lastDispatchOwner = finalHandledBy;
-    if (probe.keymapWrapper && this.app.keymap?.onKeyEvent === probe.keymapWrapper) {
-      this.app.keymap.onKeyEvent = probe.originalOnKeyEvent;
-    }
-    if (probe.commandWrapper && this.app.commands?.executeCommandById === probe.commandWrapper) {
-      this.app.commands.executeCommandById = probe.originalExecuteCommandById;
-    }
-    const commandMatched = coreHandled || pluginResult.handled;
-    const entry = {
-      at: new Date().toISOString(),
-      phase: "before-input-event",
-      guestWebContentsId: probe.binding.id,
-      physicalInputReceived: true,
-      matchingCommands: probe.matchingCommands,
-      input: this.keyboardInputSnapshot(probe.input),
-      beforeInputReached: true,
-      electronDefaultPrevented: Boolean(probe.event?.defaultPrevented),
-      dispatchOwner: finalHandledBy,
-      coreDispatchAttempted: coreAttempted,
-      coreDispatchVerified: coreHandled,
-      pluginDispatchAttempted: pluginResult.attempted,
-      pluginDispatchAttemptCount: probe.pluginDispatchAttemptCount,
-      dispatchAttemptCount: (coreAttempted ? 1 : 0) + (pluginResult.attempted ? 1 : 0),
-      keymapReached: probe.keymapCalls.length > 0,
-      keymapCallCount: probe.keymapCalls.length,
-      keymapCalls: probe.keymapCalls,
-      executeCommandCalls: probe.commandCalls,
-      commandMatched,
-      duplicateSuppressed: coreHandled && !pluginResult.attempted,
-      finalHandledBy,
-      ignoredReason: probe.activeLeafOwner ? null : "active leaf is not guest owner",
-      ...this.keyboardOwnershipSnapshot(probe.binding)
-    };
-    this.recordKeyboardDiagnostic(entry);
-  }
-
-  async traceGuestFocusBoundary(binding, input) {
-    const entry = {
-      at: new Date().toISOString(),
-      phase: "guest-mouse-down",
-      guestWebContentsId: binding.id,
-      inputType: input?.type || null,
-      ...this.keyboardOwnershipSnapshot(binding),
-      composer: null,
-      composerProbeError: null
-    };
-    try {
-      entry.composer = await binding.webContents.executeJavaScript(
-        COMPOSER_KEYBOARD_DIAGNOSTIC_SCRIPT,
-        true
-      );
-    } catch (error) {
-      entry.composerProbeError = String(error);
-    }
-    this.recordKeyboardDiagnostic(entry);
-  }
-
-  async traceGuestKeyboardInput(binding, input) {
-    if (!binding || input?.type !== "keyDown") return;
-    const matchingCommands = this.matchingObsidianHotkeyCommands(input);
-    if (matchingCommands.length === 0) return;
-    const entry = {
-      at: new Date().toISOString(),
-      phase: "input-event",
-      guestWebContentsId: binding.id,
-      matchingCommands,
-      input: this.keyboardInputSnapshot(input),
-      ...this.keyboardOwnershipSnapshot(binding),
-      composer: null,
-      composerProbeError: null
-    };
-    try {
-      entry.composer = await binding.webContents.executeJavaScript(
-        COMPOSER_KEYBOARD_DIAGNOSTIC_SCRIPT,
-        true
-      );
-    } catch (error) {
-      entry.composerProbeError = String(error);
-    }
-    this.recordKeyboardDiagnostic(entry);
-  }
-
-  attachGuestKeyboard(webview) {
-    this.ensureGuestKeyboardAttached(webview);
-  }
-
-  detachGuestBinding(id, binding) {
-    if (this.keyboardKeyProbe?.binding === binding) this.finishGuestKeyboardProbe(this.keyboardKeyProbe);
-    binding.changingFallback = true;
-    try { binding.webContents.removeListener("before-input-event", binding.beforeInput); } catch (_) {}
-    binding.changingFallback = false;
-    try {
-      binding.webContents.removeListener("before-input-event", binding.beforeInputProbe);
-      binding.webContents.removeListener("newListener", binding.newListener);
-      binding.webContents.removeListener("removeListener", binding.removeListener);
-      binding.webContents.removeListener("input-event", binding.inputEvent);
-      binding.webContents.removeListener("destroyed", binding.destroyed);
-    } catch (_) {}
-    for (const owner of binding.webviews) {
-      const ownerBinding = this.boundWebviews.get(owner);
-      if (ownerBinding?.guestId === id) ownerBinding.guestId = null;
-    }
-    if (this.guestBindings.get(id) === binding) this.guestBindings.delete(id);
-  }
-
-  releaseGuestKeyboard(webview) {
-    const webviewBinding = this.boundWebviews.get(webview);
-    const id = webviewBinding?.guestId;
-    if (!id) return;
-    webviewBinding.guestId = null;
-    const binding = this.guestBindings.get(id);
-    if (!binding) return;
-    if (this.keyboardKeyProbe?.binding === binding) this.finishGuestKeyboardProbe(this.keyboardKeyProbe);
-    binding.webviews.delete(webview);
-    if (binding.webviews.size === 0) this.detachGuestBinding(id, binding);
   }
 
   removeWebviewBinding(webview) {
@@ -1678,14 +970,10 @@ class GptObsidianPlugin extends Plugin {
     if (binding) {
       try {
         webview.removeEventListener("dom-ready", binding.domReady);
-        webview.removeEventListener("did-attach", binding.didAttach);
         webview.removeEventListener("did-navigate", binding.navigated);
         webview.removeEventListener("did-navigate-in-page", binding.navigatedInPage);
-        webview.removeEventListener("focus", binding.focused);
-        webview.removeEventListener("blur", binding.blurred);
         webview.removeEventListener("destroyed", binding.destroyed);
       } catch (_) {}
-      this.releaseGuestKeyboard(webview);
       this.boundWebviews.delete(webview);
     }
     const bridge = this.bridgeBindings.get(webview);
@@ -1707,69 +995,6 @@ class GptObsidianPlugin extends Plugin {
       this.bridgeBindingsByLeafId.delete(binding.leafId);
     }
     try { binding.button?.remove(); } catch (_) {}
-  }
-
-  handleGuestInput(event, input) {
-    if (!isPotentialObsidianShortcut(input) || event?.defaultPrevented) return false;
-
-    const commandsApi = this.app.commands;
-    const hotkeyManager = this.app.hotkeyManager;
-    const commands = commandsApi && commandsApi.commands;
-    if (!commandsApi || !hotkeyManager || !commands) return false;
-
-    let suppressed = false;
-
-    for (const commandId of Object.keys(commands)) {
-      const hotkeys = this.getEffectiveHotkeys(hotkeyManager, commandId);
-      if (!hotkeys || hotkeys.length === 0) continue;
-      if (!hotkeys.some((hotkey) => hotkeyMatchesInput(hotkey, input))) continue;
-
-      // Suppress the guest accelerator before executing the Obsidian command. If
-      // this happens afterwards, Electron may dispatch the same physical input
-      // through the host accelerator path and move two tabs instead of one.
-      if (!suppressed) {
-        event?.preventDefault?.();
-        suppressed = true;
-      }
-
-      let handled = false;
-      try {
-        handled = Boolean(commandsApi.executeCommandById(commandId));
-      } catch (error) {
-        console.error(`[GPT Obsidian] Failed to execute command ${commandId}:`, error);
-      }
-
-      if (handled) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  getEffectiveHotkeys(manager, commandId) {
-    const custom = manager.customKeys;
-    if (custom && Object.prototype.hasOwnProperty.call(custom, commandId)) {
-      return Array.isArray(custom[commandId]) ? custom[commandId] : [];
-    }
-
-    const defaults = manager.defaultKeys;
-    if (defaults && Array.isArray(defaults[commandId])) return defaults[commandId];
-
-    if (typeof manager.getHotkeys === "function") {
-      try {
-        const hotkeys = manager.getHotkeys(commandId);
-        if (Array.isArray(hotkeys)) return hotkeys;
-      } catch (_) {}
-    }
-
-    if (typeof manager.getDefaultHotkeys === "function") {
-      try {
-        const hotkeys = manager.getDefaultHotkeys(commandId);
-        if (Array.isArray(hotkeys)) return hotkeys;
-      } catch (_) {}
-    }
-
-    return [];
   }
 
   schedulePromptFocus(webview, serial) {
@@ -1797,7 +1022,7 @@ class GptObsidianPlugin extends Plugin {
     if (this.warnedRemote) return;
     this.warnedRemote = true;
     console.warn(
-      "[GPT Obsidian] Electron guest keyboard interception is unavailable; prompt autofocus will still work.",
+      "[GPT Obsidian] Electron guest integration is unavailable; Copilot transport may fall back to Native UI.",
       error
     );
   }
@@ -2846,8 +2071,6 @@ class GptObsidianPlugin extends Plugin {
     try {
       const id = webview.getWebContentsId();
       if (!id) return null;
-      const existing = this.guestBindings.get(id)?.webContents;
-      if (existing && !existing.isDestroyed?.()) return existing;
       const remote = this.remote || require("@electron/remote");
       return remote?.webContents?.fromId?.(id) || null;
     } catch (_) {
@@ -2986,10 +2209,6 @@ class GptObsidianPlugin extends Plugin {
 module.exports = GptObsidianPlugin;
 
 module.exports._test = {
-  normalizeKey,
-  keyCandidates,
-  hotkeyMatchesInput,
-  isPotentialObsidianShortcut,
   isChatGptUrl,
   parseRgb,
   invertColor,

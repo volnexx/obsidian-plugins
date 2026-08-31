@@ -21,7 +21,6 @@ const GptObsidianPlugin = require("./main.js");
 const {
   bridgeDecisionPolicy,
   controlPrompt,
-  hotkeyMatchesInput,
   isBridgeDecisionAllowed,
   isPermanentOption,
   parsePermissionDecision,
@@ -37,7 +36,6 @@ class FakeGuest extends EventEmitter {
     this.backgroundThrottling = true;
     this.inserted = [];
     this.state = null;
-    this.composerState = null;
     this.focused = true;
     this.accepted = { ok: true, lastUserId: "u2", userCount: 2 };
   }
@@ -49,7 +47,6 @@ class FakeGuest extends EventEmitter {
   insertText(text) { this.inserted.push(text); }
   sendInputEvent() {}
   async executeJavaScript(script) {
-    if (script.includes("__gptObsidianComposerKeyboardDiagnostic")) return this.composerState;
     if (script.includes("assistantCount:")) return this.state;
     if (script.includes("prompt unavailable")) return { ok: true };
     if (script.includes("composer-submit-button")) return true;
@@ -96,7 +93,6 @@ function makePlugin(leaf, guests) {
   plugin.activationSerial = 0;
   plugin.boundWebviews = new Map();
   plugin.destroyedWebviews = new WeakSet();
-  plugin.guestBindings = new Map();
   plugin.bridgeBindings = new Map();
   plugin.bridgeBindingsByLeafId = new Map();
   plugin.copilotUnregister = null;
@@ -294,203 +290,6 @@ function cleanupLifecycle({ plugin, bindings }) {
   plugin.copilotManager = null;
   if (plugin.copilotRetryTimer != null) window.clearTimeout(plugin.copilotRetryTimer);
   plugin.copilotRetryTimer = null;
-}
-
-function shortcutEvent() {
-  return {
-    defaultPrevented: false,
-    preventDefault() { this.defaultPrevented = true; }
-  };
-}
-
-function keyboardFixture(url = "https://chatgpt.com/c/keyboard") {
-  const guest = new FakeGuest(301);
-  const webview = new FakeWebview(301, true, url);
-  const leaf = { id: "leaf-keyboard", view: { webview, containerEl: null } };
-  const guests = new Map([[301, guest]]);
-  const plugin = makePlugin(leaf, guests);
-  const result = { position: 0, preventedWhenExecuted: [], executed: [] };
-  plugin.app.commands.commands = {
-    "workspace:next-tab": {},
-    "workspace:previous-tab": {}
-  };
-  plugin.app.commands.executeCommandById = (commandId) => {
-    result.executed.push(commandId);
-    result.preventedWhenExecuted.push(result.currentEvent?.defaultPrevented === true);
-    if (commandId === "workspace:next-tab") result.position += 1;
-    else if (commandId === "workspace:previous-tab") result.position -= 1;
-    else return false;
-    return true;
-  };
-  plugin.app.hotkeyManager.customKeys = {
-    "workspace:next-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowRight" }],
-    "workspace:previous-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowLeft" }]
-  };
-  plugin.app.keymap = {
-    onKeyEvent(event) {
-      const input = {
-        type: "keyDown",
-        key: event.key,
-        code: event.code,
-        control: event.ctrlKey,
-        alt: event.altKey,
-        meta: event.metaKey,
-        shift: event.shiftKey,
-        isComposing: event.isComposing
-      };
-      for (const commandId of Object.keys(plugin.app.commands.commands)) {
-        const hotkeys = plugin.getEffectiveHotkeys(plugin.app.hotkeyManager, commandId);
-        if (!hotkeys.some((hotkey) => hotkeyMatchesInput(hotkey, input))) continue;
-        if (!plugin.app.commands.executeCommandById(commandId)) return undefined;
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-      }
-      return undefined;
-    }
-  };
-  plugin.boundWebviews.set(webview, { guestId: null });
-  return { plugin, guest, webview, leaf, guests, result };
-}
-
-function installCoreWebViewerKeyboardBridge(fixture) {
-  fixture.leaf.view.configureWebContents = () => undefined;
-  fixture.plugin.app.keymap ||= {
-    onKeyEvent(event) {
-      const input = {
-        type: "keyDown",
-        key: event.key,
-        code: event.code,
-        control: event.ctrlKey,
-        alt: event.altKey,
-        meta: event.metaKey,
-        shift: event.shiftKey,
-        isComposing: event.isComposing
-      };
-      for (const commandId of Object.keys(fixture.plugin.app.commands.commands)) {
-        const hotkeys = fixture.plugin.getEffectiveHotkeys(fixture.plugin.app.hotkeyManager, commandId);
-        if (!hotkeys.some((hotkey) => hotkeyMatchesInput(hotkey, input))) continue;
-        if (!fixture.plugin.app.commands.executeCommandById(commandId)) return undefined;
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-      }
-      return undefined;
-    }
-  };
-  const beforeInput = (_event, input) => {
-    if (input.type !== "keyDown" || fixture.guest.isDestroyed()) return;
-    fixture.plugin.app.keymap.onKeyEvent({
-      type: "keydown",
-      key: input.key,
-      code: input.code,
-      shiftKey: input.shift,
-      altKey: input.alt,
-      ctrlKey: input.control,
-      metaKey: input.meta,
-      repeat: input.isAutoRepeat,
-      defaultPrevented: false,
-      preventDefault() { this.defaultPrevented = true; },
-      stopPropagation() {}
-    });
-  };
-  fixture.guest.on("before-input-event", beforeInput);
-  return beforeInput;
-}
-
-function removeCoreWebViewerKeyboardBridge(fixture, beforeInput) {
-  fixture.guest.removeListener("before-input-event", beforeInput);
-}
-
-function activeKeyboardDispatchPathCount(fixture) {
-  return fixture.plugin.activeKeyboardDispatchPathCount(fixture.webview);
-}
-
-function pluginFallbackListenerCount(fixture) {
-  const binding = fixture.plugin.guestBindings.get(fixture.webview.getWebContentsId());
-  if (!binding) return 0;
-  return fixture.guest.listeners("before-input-event").filter((listener) =>
-    listener === binding.beforeInput
-  ).length;
-}
-
-function pluginArbiterListenerCount(fixture) {
-  const binding = fixture.plugin.guestBindings.get(fixture.webview.getWebContentsId());
-  if (!binding) return 0;
-  return fixture.guest.listeners("before-input-event").filter((listener) =>
-    listener === binding.beforeInputProbe
-  ).length;
-}
-
-function dispatchBeforeInputListenerCount(plugin, guest) {
-  const binding = plugin.guestBindings.get(guest.id);
-  return guest.listeners("before-input-event").filter((listener) =>
-    listener !== binding?.beforeInputProbe
-  ).length;
-}
-
-function bindKeyboardLifecycle(fixture) {
-  fixture.plugin.boundWebviews.clear();
-  fixture.plugin.bridgeBindingFor = () => null;
-  fixture.plugin.applyAppearance = () => false;
-  fixture.plugin.schedulePromptFocus = () => undefined;
-  GptObsidianPlugin.prototype.bindWebview.call(fixture.plugin, fixture.webview);
-  return fixture;
-}
-
-function emitShortcut(fixture, direction) {
-  const event = shortcutEvent();
-  fixture.result.currentEvent = event;
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: direction === "next" ? "ArrowRight" : "ArrowLeft",
-    code: direction === "next" ? "ArrowRight" : "ArrowLeft",
-    control: true,
-    alt: true,
-    meta: false,
-    shift: false,
-    isComposing: false
-  });
-  if (fixture.plugin.keyboardKeyProbe) {
-    fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
-  }
-  fixture.result.currentEvent = null;
-  return event;
-}
-
-function emitGuestKey(fixture, input) {
-  const event = shortcutEvent();
-  fixture.result.currentEvent = event;
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: input.key,
-    code: input.code,
-    control: Boolean(input.control),
-    alt: Boolean(input.alt),
-    meta: Boolean(input.meta),
-    shift: Boolean(input.shift),
-    isComposing: Boolean(input.isComposing),
-    isAutoRepeat: false
-  });
-  if (fixture.plugin.keyboardKeyProbe) {
-    fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
-  }
-  fixture.result.currentEvent = null;
-  return event;
-}
-
-function emitInputEventShortcut(fixture, direction) {
-  fixture.guest.emit("input-event", {}, {
-    type: "keyDown",
-    key: direction === "next" ? "ArrowRight" : "ArrowLeft",
-    code: direction === "next" ? "ArrowRight" : "ArrowLeft",
-    control: true,
-    alt: true,
-    meta: false,
-    shift: false,
-    isComposing: false,
-    isAutoRepeat: false
-  });
 }
 
 async function startLifecyclePending({
@@ -1250,7 +1049,7 @@ test("bridge OFF during pending immediately cancels into native fallback", async
   assert.equal(binding.enabled, false);
 });
 
-test("visible-hidden-visible after SPA keeps one binding, poller, and guest listener", async () => {
+test("visible-hidden-visible after SPA keeps one binding and poller without keyboard listeners", async () => {
   const state = await startLifecyclePending();
   const { plugin, binding, leaf, webview, guest } = state;
   const pending = binding.pending;
@@ -1269,9 +1068,8 @@ test("visible-hidden-visible after SPA keeps one binding, poller, and guest list
   assert.equal(plugin.bridgeBindings.size, 1);
   assert.equal(binding.pending, pending);
   assert.equal(binding.pending.pollTimer, pollTimer);
-  assert.equal(guest.listenerCount("destroyed"), 1);
-  assert.equal(dispatchBeforeInputListenerCount(plugin, guest), 0);
-  assert.equal(pluginArbiterListenerCount({ plugin, guest, webview }), 1);
+  assert.equal(guest.listenerCount("destroyed"), 0);
+  assert.equal(guest.listenerCount("before-input-event"), 0);
   assert.deepEqual(await completeLifecyclePending(state), {
     outcome: { outcome: "selected", optionId: "allow_once" }
   });
@@ -1530,586 +1328,65 @@ test("permission prompt does not describe unavailable session or permanent choic
   assert.doesNotMatch(prompt, /Do NOT choose "Allow Always"/);
 });
 
-test("GPT focused next-tab hotkey moves exactly one tab", () => {
-  const fixture = keyboardFixture();
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  emitShortcut(fixture, "next");
-
-  assert.equal(fixture.result.position, 1);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 0);
-  assert.equal(fixture.plugin.guestBindings.size, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("GPT focused previous-tab hotkey moves exactly one tab", () => {
-  const fixture = keyboardFixture();
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  emitShortcut(fixture, "previous");
-
-  assert.equal(fixture.result.position, -1);
-  assert.deepEqual(fixture.result.executed, ["workspace:previous-tab"]);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(fixture.plugin.guestBindings.size, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("plugin arbiter suppresses a matched guest hotkey before executing it once", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  const event = emitShortcut(fixture, "next");
-
-  assert.equal(event.defaultPrevented, true);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  assert.deepEqual(fixture.result.preventedWhenExecuted, [true]);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("repeated guest attach and rebind keep one plugin arbiter", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  fixture.plugin.attachGuestKeyboard(fixture.webview);
-
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("a late working core listener coexists with one arbiter but never double-dispatches", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-
-  installCoreWebViewerKeyboardBridge(fixture);
-
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(fixture.plugin.guestBindings.size, 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("guest replacement removes the old before-input-event listener", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture());
-  const replacement = new FakeGuest(302);
-  fixture.guests.set(302, replacement);
-  fixture.webview.id = 302;
-
-  fixture.webview.emit("did-attach");
-
-  assert.equal(fixture.guest.listenerCount("before-input-event"), 0);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, replacement), 0);
-  assert.equal(pluginArbiterListenerCount({ ...fixture, guest: replacement }), 1);
-  assert.equal(activeKeyboardDispatchPathCount({ ...fixture, guest: replacement }), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 0);
-  fixture.guest = replacement;
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
-});
-
-test("ordinary Markdown tab is not intercepted by GPT guest keyboard handling", () => {
-  const fixture = keyboardFixture();
-  const markdownLeaf = { id: "leaf-markdown", view: { getViewType: () => "markdown" } };
-  fixture.plugin.app.workspace.activeLeaf = markdownLeaf;
-  fixture.plugin.app.workspace.iterateAllLeaves = (visit) => visit(markdownLeaf);
-  fixture.plugin.probeActiveLeaf(fixture.plugin.activationSerial);
-
-  assert.equal(fixture.guest.listenerCount("before-input-event"), 0);
-  assert.equal(fixture.result.position, 0);
-  assert.deepEqual(fixture.result.executed, []);
-});
-
-test("physical KeyB still matches Ctrl+B across keyboard layouts", () => {
-  assert.equal(hotkeyMatchesInput(
-    { modifiers: ["Ctrl"], key: "b" },
-    { type: "keyDown", key: "и", code: "KeyB", control: true }
-  ), true);
-});
-
-test("core Web Viewer forwarding preserves physical code on a Russian layout", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.app.hotkeyManager.customKeys["workspace:next-tab"] = [
-    { modifiers: ["Ctrl"], key: "l" }
-  ];
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  const event = shortcutEvent();
-
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: "д",
-    code: "KeyL",
-    control: true,
-    alt: false,
-    meta: false,
-    shift: false,
-    isComposing: false
-  });
-
-  assert.equal(fixture.result.position, 1);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(fixture.plugin.guestBindings.size, 1);
-});
-
-test("fallback dispatch preserves physical code on a Russian layout", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.app.hotkeyManager.customKeys["workspace:next-tab"] = [
-    { modifiers: ["Ctrl"], key: "l" }
-  ];
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  const event = shortcutEvent();
-  fixture.result.currentEvent = event;
-
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: "д",
-    code: "KeyL",
-    control: true,
-    alt: false,
-    meta: false,
-    shift: false,
-    isComposing: false
-  });
-  fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
-  fixture.result.currentEvent = null;
-
-  assert.equal(event.defaultPrevented, true);
-  assert.equal(fixture.result.position, 1);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("unrelated guest key is neither suppressed nor dispatched", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  const event = shortcutEvent();
-
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: "x",
-    code: "KeyX",
-    control: true,
-    alt: false,
-    meta: false,
-    shift: false,
-    isComposing: false
-  });
-
-  assert.equal(event.defaultPrevented, false);
-  assert.equal(fixture.result.position, 0);
-  assert.deepEqual(fixture.result.executed, []);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-for (const shortcut of [
-  { label: "Ctrl+A", key: "a", code: "KeyA" },
-  { label: "Ctrl+C", key: "c", code: "KeyC" },
-  { label: "Ctrl+V", key: "v", code: "KeyV" }
-]) {
-  test(`${shortcut.label} remains a browser shortcut when it is not an Obsidian hotkey`, () => {
-    const fixture = keyboardFixture();
-    fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-    const event = emitGuestKey(fixture, {
-      key: shortcut.key,
-      code: shortcut.code,
-      control: true
-    });
-
-    assert.equal(event.defaultPrevented, false);
-    assert.deepEqual(fixture.result.executed, []);
-    assert.equal(Boolean(fixture.plugin.keyboardKeyProbe), false);
-    fixture.plugin.releaseGuestKeyboard(fixture.webview);
-  });
-}
-
-test("ordinary composer text remains owned by Chromium", () => {
-  const fixture = keyboardFixture();
-  fixture.webview.composerFocused = true;
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  const event = emitGuestKey(fixture, { key: "g", code: "KeyG" });
-
-  assert.equal(event.defaultPrevented, false);
-  assert.deepEqual(fixture.result.executed, []);
-  assert.equal(Boolean(fixture.plugin.keyboardKeyProbe), false);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("a non-tab Obsidian hotkey uses the same one-event arbitration", () => {
-  const fixture = keyboardFixture();
-  let customCalls = 0;
-  fixture.plugin.app.commands.commands["app:custom-hotkey"] = {};
-  fixture.plugin.app.hotkeyManager.customKeys["app:custom-hotkey"] = [
-    { modifiers: ["Ctrl", "Shift"], key: "k" }
-  ];
-  const execute = fixture.plugin.app.commands.executeCommandById;
-  fixture.plugin.app.commands.executeCommandById = (commandId) => {
-    if (commandId === "app:custom-hotkey") {
-      customCalls += 1;
-      return true;
-    }
-    return execute(commandId);
-  };
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  const event = emitGuestKey(fixture, {
-    key: "л",
-    code: "KeyK",
-    control: true,
-    shift: true
-  });
-
-  assert.equal(event.defaultPrevented, true);
-  assert.equal(customCalls, 1);
-  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
-  assert.deepEqual(entry.matchingCommands, ["app:custom-hotkey"]);
-  assert.equal(entry.dispatchOwner, "plugin");
-  assert.equal(entry.dispatchAttemptCount, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("working core dispatch is verified for the event and plugin duplicate is suppressed", () => {
-  const fixture = keyboardFixture();
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  emitShortcut(fixture, "next");
-
-  assert.equal(fixture.result.position, 1);
-  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
-  assert.equal(entry.coreListenerPresent, true);
-  assert.equal(entry.coreDispatchAttempted, true);
-  assert.equal(entry.coreDispatchVerified, true);
-  assert.equal(entry.coreBridgePresent, true);
-  assert.equal(entry.pluginDispatchAttempted, false);
-  assert.equal(entry.dispatchAttemptCount, 1);
-  assert.equal(entry.keymapCallCount, 1);
-  assert.equal(entry.executeCommandCalls.length, 1);
-  assert.equal(entry.executeCommandCalls[0].source, "core");
-  assert.equal(entry.duplicateSuppressed, true);
-  assert.equal(entry.finalHandledBy, "core");
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("inactive guest owner suppresses both core and plugin command dispatch", () => {
-  const fixture = keyboardFixture();
-  const markdownLeaf = { id: "leaf-markdown-active", view: { getViewType: () => "markdown" } };
-  fixture.plugin.app.workspace.activeLeaf = markdownLeaf;
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  const event = emitShortcut(fixture, "next");
-
-  assert.equal(event.defaultPrevented, true);
-  assert.equal(fixture.result.position, 0);
-  assert.deepEqual(fixture.result.executed, []);
-  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
-  assert.equal(entry.finalHandledBy, "suppressed-inactive-owner");
-  assert.equal(entry.commandMatched, false);
-  assert.equal(entry.ignoredReason, "active leaf is not guest owner");
-  assert.equal(entry.executeCommandCalls.length, 0);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("already prevented guest input is not dispatched again", () => {
-  const fixture = keyboardFixture();
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  const event = shortcutEvent();
-  event.preventDefault();
-
-  fixture.guest.emit("before-input-event", event, {
-    type: "keyDown",
-    key: "ArrowRight",
-    code: "ArrowRight",
-    control: true,
-    alt: true,
-    meta: false,
-    shift: false,
-    isComposing: false
-  });
-
-  assert.equal(fixture.result.position, 0);
-  assert.deepEqual(fixture.result.executed, []);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("core listener disappearance leaves exactly one working arbiter path", () => {
-  const fixture = keyboardFixture();
-  const coreListener = installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  removeCoreWebViewerKeyboardBridge(fixture, coreListener);
-
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
-  assert.equal(pluginFallbackListenerCount(fixture), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("a returning core bridge is verified per event and does not dispatch twice", () => {
-  const fixture = keyboardFixture();
-  const firstCoreListener = installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  removeCoreWebViewerKeyboardBridge(fixture, firstCoreListener);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-
-  installCoreWebViewerKeyboardBridge(fixture);
-
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 0);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("live failure fixture: a dead structural core listener falls back to one plugin dispatch", async () => {
-  const fixture = keyboardFixture();
-  const hostEvent = () => ({
-    type: "keydown",
-    key: "ArrowRight",
-    code: "ArrowRight",
-    ctrlKey: true,
-    altKey: true,
-    metaKey: false,
-    shiftKey: false,
-    defaultPrevented: false,
-    preventDefault() { this.defaultPrevented = true; },
-    stopPropagation() {}
-  });
-
-  fixture.plugin.app.keymap.onKeyEvent(hostEvent());
-  assert.equal(fixture.result.position, 1, "A: Markdown host focus dispatches exactly once");
-
-  fixture.leaf.view.configureWebContents = () => undefined;
-  const structurallyCoreButDead = () => undefined;
-  fixture.guest.on("before-input-event", structurallyCoreButDead);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 0);
-
-  emitShortcut(fixture, "next");
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(fixture.result.position, 2, "B: focused guest dispatches exactly once through the arbiter");
-  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.findLast((candidate) =>
-    candidate.phase === "before-input-event"
-  );
-  assert.equal(entry.beforeInputReached, true);
-  assert.equal(entry.ownershipDetection, "plugin-arbiter");
-  assert.equal(entry.coreListenerCount, 1);
-  assert.equal(entry.coreListenerPresent, true);
-  assert.equal(entry.coreBridgePresent, false);
-  assert.equal(entry.fallbackAttached, false);
-  assert.equal(entry.pluginDispatcherAttached, true);
-  assert.equal(entry.coreDispatchAttempted, false);
-  assert.equal(entry.pluginDispatchAttempted, true);
-  assert.equal(entry.pluginDispatchAttemptCount, 1);
-  assert.equal(entry.dispatchAttemptCount, 1);
-  assert.equal(entry.keymapReached, false);
-  assert.equal(entry.commandMatched, true);
-  assert.equal(entry.dispatchOwner, "plugin");
-  assert.equal(entry.finalHandledBy, "plugin");
-  assert.equal(entry.executeCommandCalls.length, 1);
-  assert.equal(entry.executeCommandCalls[0].source, "plugin");
-
-  fixture.plugin.app.keymap.onKeyEvent(hostEvent());
-  assert.equal(fixture.result.position, 3, "D: returning to Markdown dispatches exactly once again");
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("SPA root to conversation navigation keeps one working keyboard path", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture("https://chatgpt.com/"));
-  fixture.webview.url = "https://chatgpt.com/c/new-conversation";
-  fixture.webview.emit("did-navigate-in-page", {}, fixture.webview.url, true);
-
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
-});
-
-test("repeated did-navigate-in-page never duplicates the keyboard arbiter", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture());
-  for (let index = 0; index < 40; index += 1) {
-    fixture.webview.url = `https://chatgpt.com/c/repeated-${index}`;
-    fixture.webview.emit("did-navigate-in-page", {}, fixture.webview.url, true);
-    assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  }
-
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
-});
-
-test("repeated dom-ready never duplicates the keyboard arbiter", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture());
-  for (let index = 0; index < 40; index += 1) {
-    fixture.webview.emit("dom-ready");
-    assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  }
-
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
-});
-
-test("repeated ChatGPT message lifecycle keeps hotkeys alive", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture());
-  for (let index = 0; index < 60; index += 1) {
-    fixture.webview.emit("focus");
-    fixture.webview.emit("blur");
-    fixture.webview.emit("dom-ready");
-    fixture.webview.emit("did-navigate-in-page", {}, fixture.webview.url, true);
-  }
-
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  emitShortcut(fixture, "previous");
-  assert.equal(fixture.result.position, 0);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab", "workspace:previous-tab"]);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
-});
-
-test("textarea-focused ChatGPT composer still fires one configured Obsidian hotkey", () => {
-  const fixture = keyboardFixture();
-  fixture.webview.composerFocused = true;
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-});
-
-test("A-E composer states are captured without changing the single core dispatch path", async () => {
-  const fixture = keyboardFixture();
-  const otherLeaf = { id: "leaf-after-hotkey", view: { getViewType: () => "markdown" } };
-  fixture.plugin.app.workspace.activeLeaf = fixture.leaf;
-  const execute = fixture.plugin.app.commands.executeCommandById;
-  fixture.plugin.app.commands.executeCommandById = (commandId) => {
-    const handled = execute(commandId);
-    if (handled) fixture.plugin.app.workspace.activeLeaf = otherLeaf;
-    return handled;
-  };
-  installCoreWebViewerKeyboardBridge(fixture);
-  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-
-  const states = [
-    { label: "A unfocused empty", composerFound: true, composerFocused: false, composerTextLength: 0, composerContentEditable: true, activeTag: "BODY", activeContentEditable: false },
-    { label: "B focused empty", composerFound: true, composerFocused: true, composerTextLength: 0, composerContentEditable: true, activeTag: "DIV", activeContentEditable: true },
-    { label: "C focused with text", composerFound: true, composerFocused: true, composerTextLength: 1, composerContentEditable: true, activeTag: "DIV", activeContentEditable: true },
-    { label: "D blurred with text", composerFound: true, composerFocused: false, composerTextLength: 1, composerContentEditable: true, activeTag: "BODY", activeContentEditable: false },
-    { label: "E after send", composerFound: true, composerFocused: true, composerTextLength: 0, composerContentEditable: true, activeTag: "DIV", activeContentEditable: true }
-  ];
-
-  for (const state of states) {
-    fixture.plugin.app.workspace.activeLeaf = fixture.leaf;
-    fixture.guest.composerState = state;
-    emitShortcut(fixture, "next");
-    emitInputEventShortcut(fixture, "next");
-    await new Promise((resolve) => setImmediate(resolve));
-    const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
-    assert.deepEqual(entry.composer, state, state.label);
-    assert.equal(entry.coreBridgePresent, true, state.label);
-    assert.equal(entry.coreListenerPresent, true, state.label);
-    assert.equal(entry.pluginDispatcherAttached, true, state.label);
-    assert.equal(entry.fallbackAttached, false, state.label);
-    assert.equal(entry.activeDispatchPathCount, 1, state.label);
-    assert.equal(entry.activeLeafIsOwner, false, state.label);
-  }
-
-  assert.equal(fixture.result.position, states.length);
-  assert.equal(fixture.guest.listenerCount("input-event"), 1);
-  fixture.plugin.releaseGuestKeyboard(fixture.webview);
-  assert.equal(fixture.guest.listenerCount("input-event"), 0);
-});
-
-test("multiple Web Viewer tabs keep independent single-owner keyboard paths", () => {
-  const guestOne = new FakeGuest(401);
-  const guestTwo = new FakeGuest(402);
-  const webviewOne = new FakeWebview(401, true, "https://chatgpt.com/c/one");
-  const webviewTwo = new FakeWebview(402, true, "https://chatgpt.com/c/two");
-  const leafOne = { id: "leaf-keyboard-one", view: { webview: webviewOne, containerEl: null } };
-  const leafTwo = { id: "leaf-keyboard-two", view: { webview: webviewTwo, containerEl: null } };
-  const guests = new Map([[401, guestOne], [402, guestTwo]]);
-  const plugin = makePlugin([leafOne, leafTwo], guests);
-  const result = { position: 0, preventedWhenExecuted: [], executed: [] };
-  plugin.app.commands.commands = { "workspace:next-tab": {} };
-  plugin.app.commands.executeCommandById = (commandId) => {
-    result.executed.push(commandId);
-    result.position += 1;
+test("WebViewer lifecycle stays intact without plugin keyboard ownership", () => {
+  const guest = new FakeGuest(501);
+  const webview = new FakeWebview(501, true, "https://chatgpt.com/c/lifecycle-only");
+  const leaf = { id: "leaf-lifecycle-only", view: { webview, containerEl: null } };
+  const plugin = makePlugin(leaf, new Map([[501, guest]]));
+  const keymap = { onKeyEvent: () => "host-keymap" };
+  const executeCommandById = () => "host-command";
+  plugin.app.keymap = keymap;
+  plugin.app.commands.executeCommandById = executeCommandById;
+  plugin.bridgeBindingFor = () => null;
+  let appearanceCalls = 0;
+  plugin.applyAppearance = () => {
+    appearanceCalls += 1;
     return true;
   };
-  plugin.app.hotkeyManager.customKeys = {
-    "workspace:next-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowRight" }]
-  };
-  plugin.boundWebviews.set(webviewOne, { guestId: null });
-  plugin.boundWebviews.set(webviewTwo, { guestId: null });
-  const first = { plugin, guest: guestOne, webview: webviewOne, leaf: leafOne, guests, result };
-  const second = { plugin, guest: guestTwo, webview: webviewTwo, leaf: leafTwo, guests, result };
-  installCoreWebViewerKeyboardBridge(first);
-  plugin.ensureGuestKeyboardAttached(webviewOne);
-  plugin.ensureGuestKeyboardAttached(webviewTwo);
+  plugin.schedulePromptFocus = () => undefined;
 
-  assert.equal(activeKeyboardDispatchPathCount(first), 1);
-  assert.equal(activeKeyboardDispatchPathCount(second), 1);
-  emitShortcut(first, "next");
-  emitShortcut(second, "next");
-  assert.equal(result.position, 2);
-  assert.deepEqual(result.executed, ["workspace:next-tab", "workspace:next-tab"]);
-  plugin.releaseGuestKeyboard(webviewOne);
-  plugin.releaseGuestKeyboard(webviewTwo);
+  GptObsidianPlugin.prototype.bindWebview.call(plugin, webview);
+
+  assert.equal(plugin.boundWebviews.size, 1);
+  assert.equal(webview.listenerCount("dom-ready"), 1);
+  assert.equal(webview.listenerCount("did-navigate"), 1);
+  assert.equal(webview.listenerCount("did-navigate-in-page"), 1);
+  assert.equal(webview.listenerCount("destroyed"), 1);
+  assert.equal(webview.listenerCount("did-attach"), 0);
+  assert.equal(webview.listenerCount("focus"), 0);
+  assert.equal(webview.listenerCount("blur"), 0);
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(guest.listenerCount("input-event"), 0);
+  assert.equal(typeof plugin.ensureGuestKeyboardAttached, "undefined");
+  assert.equal(typeof plugin.coreWebViewerHasKeyboardListener, "undefined");
+  assert.equal(typeof plugin.beginGuestKeyboardProbe, "undefined");
+  assert.equal(plugin.app.keymap, keymap);
+  assert.equal(plugin.app.commands.executeCommandById, executeCommandById);
+
+  webview.emit("dom-ready");
+  webview.emit("did-navigate", {}, webview.url, 200, "OK");
+  webview.emit("did-navigate-in-page", {}, webview.url, true);
+
+  assert.equal(appearanceCalls, 3);
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(plugin.app.keymap, keymap);
+  assert.equal(plugin.app.commands.executeCommandById, executeCommandById);
+
+  plugin.removeWebviewBinding(webview);
+  assert.equal(plugin.boundWebviews.size, 0);
+  assert.equal(webview.listenerCount("dom-ready"), 0);
+  assert.equal(webview.listenerCount("did-navigate"), 0);
+  assert.equal(webview.listenerCount("did-navigate-in-page"), 0);
+  assert.equal(webview.listenerCount("destroyed"), 0);
 });
 
-test("long navigation focus and message lifecycle preserves one dispatch path", () => {
-  const fixture = bindKeyboardLifecycle(keyboardFixture());
-  for (let index = 0; index < 500; index += 1) {
-    fixture.webview.emit(index % 2 === 0 ? "focus" : "blur");
-    if (index % 5 === 0) fixture.webview.emit("dom-ready");
-    if (index % 7 === 0) {
-      fixture.webview.emit("did-navigate-in-page", {}, fixture.webview.url, true);
-    }
-    if (index % 11 === 0) {
-      fixture.webview.emit("did-navigate", {}, fixture.webview.url, 200, "OK");
-    }
-    assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  }
+test("permission transport resolves guest directly without a keyboard cache", () => {
+  const guest = new FakeGuest(502);
+  const webview = new FakeWebview(502, true, "https://chatgpt.com/c/permission-transport");
+  const leaf = { id: "leaf-permission-transport", view: { webview, containerEl: null } };
+  const plugin = makePlugin(leaf, new Map([[502, guest]]));
 
-  emitShortcut(fixture, "next");
-  assert.equal(fixture.result.position, 1);
-  assert.equal(pluginArbiterListenerCount(fixture), 1);
-  fixture.plugin.removeWebviewBinding(fixture.webview);
+  assert.equal(Object.prototype.hasOwnProperty.call(plugin, "guestBindings"), false);
+  assert.equal(plugin.getGuestWebContents(webview), guest);
+  assert.equal(guest.listenerCount("before-input-event"), 0);
 });
