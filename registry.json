@@ -68,18 +68,18 @@
     {
       "id": "gpt-obsidian",
       "name": "GPT Obsidian",
-      "version": "1.2.4",
+      "version": "1.2.5",
       "path": "gpt-obsidian",
-      "runtimeHash": "f9bb12b5306cc1ab365b587286ba90852929bea1c9952a1aec92a46482ee5c9f",
+      "sourcePath": "gpt-obsidian/dev-source",
+      "sourceHash": "d973bdc41eb7a63e0cbecbb8f8f40658adb97e0a855e32cedb6bab87f706549a",
+      "runtimeHash": "4410d85ed83256e26e281a33a37518646aaef4b951445a2e98b32cc44f3be116",
       "runtimeFiles": [
         "main.js",
         "manifest.json"
       ],
+      "sourceComplete": true,
       "isDesktopOnly": true,
-      "mobile": false,
-      "sourcePath": "gpt-obsidian/dev-source",
-      "sourceHash": "5dfd70fb2a2a4aa21f606fdfbbd8545749267a775b4f355f717b5eacd5deb6b4",
-      "sourceComplete": true
+      "mobile": false
     },
     {
       "id": "home-tab",

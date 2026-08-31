@@ -414,6 +414,14 @@ function pluginFallbackListenerCount(fixture) {
   ).length;
 }
 
+function pluginArbiterListenerCount(fixture) {
+  const binding = fixture.plugin.guestBindings.get(fixture.webview.getWebContentsId());
+  if (!binding) return 0;
+  return fixture.guest.listeners("before-input-event").filter((listener) =>
+    listener === binding.beforeInputProbe
+  ).length;
+}
+
 function dispatchBeforeInputListenerCount(plugin, guest) {
   const binding = plugin.guestBindings.get(guest.id);
   return guest.listeners("before-input-event").filter((listener) =>
@@ -443,6 +451,30 @@ function emitShortcut(fixture, direction) {
     shift: false,
     isComposing: false
   });
+  if (fixture.plugin.keyboardKeyProbe) {
+    fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
+  }
+  fixture.result.currentEvent = null;
+  return event;
+}
+
+function emitGuestKey(fixture, input) {
+  const event = shortcutEvent();
+  fixture.result.currentEvent = event;
+  fixture.guest.emit("before-input-event", event, {
+    type: "keyDown",
+    key: input.key,
+    code: input.code,
+    control: Boolean(input.control),
+    alt: Boolean(input.alt),
+    meta: Boolean(input.meta),
+    shift: Boolean(input.shift),
+    isComposing: Boolean(input.isComposing),
+    isAutoRepeat: false
+  });
+  if (fixture.plugin.keyboardKeyProbe) {
+    fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
+  }
   fixture.result.currentEvent = null;
   return event;
 }
@@ -1238,7 +1270,8 @@ test("visible-hidden-visible after SPA keeps one binding, poller, and guest list
   assert.equal(binding.pending, pending);
   assert.equal(binding.pending.pollTimer, pollTimer);
   assert.equal(guest.listenerCount("destroyed"), 1);
-  assert.equal(dispatchBeforeInputListenerCount(plugin, guest), 1);
+  assert.equal(dispatchBeforeInputListenerCount(plugin, guest), 0);
+  assert.equal(pluginArbiterListenerCount({ plugin, guest, webview }), 1);
   assert.deepEqual(await completeLifecyclePending(state), {
     outcome: { outcome: "selected", optionId: "allow_once" }
   });
@@ -1528,7 +1561,7 @@ test("GPT focused previous-tab hotkey moves exactly one tab", () => {
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("fallback suppresses guest input before executing the host command", () => {
+test("plugin arbiter suppresses a matched guest hotkey before executing it once", () => {
   const fixture = keyboardFixture();
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
 
@@ -1538,31 +1571,35 @@ test("fallback suppresses guest input before executing the host command", () => 
   assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
   assert.deepEqual(fixture.result.preventedWhenExecuted, [true]);
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 1);
+  assert.equal(pluginFallbackListenerCount(fixture), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("repeated guest attach and rebind keep one before-input-event listener", () => {
+test("repeated guest attach and rebind keep one plugin arbiter", () => {
   const fixture = keyboardFixture();
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
   fixture.plugin.attachGuestKeyboard(fixture.webview);
 
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("detecting the core Web Viewer bridge removes an earlier fallback listener", () => {
+test("a late working core listener coexists with one arbiter but never double-dispatches", () => {
   const fixture = keyboardFixture();
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
 
   installCoreWebViewerKeyboardBridge(fixture);
 
   assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
   assert.equal(fixture.plugin.guestBindings.size, 1);
   emitShortcut(fixture, "next");
@@ -1579,7 +1616,8 @@ test("guest replacement removes the old before-input-event listener", () => {
   fixture.webview.emit("did-attach");
 
   assert.equal(fixture.guest.listenerCount("before-input-event"), 0);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, replacement), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, replacement), 0);
+  assert.equal(pluginArbiterListenerCount({ ...fixture, guest: replacement }), 1);
   assert.equal(activeKeyboardDispatchPathCount({ ...fixture, guest: replacement }), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 0);
@@ -1654,6 +1692,7 @@ test("fallback dispatch preserves physical code on a Russian layout", () => {
     shift: false,
     isComposing: false
   });
+  fixture.plugin.finishGuestKeyboardProbe(fixture.plugin.keyboardKeyProbe);
   fixture.result.currentEvent = null;
 
   assert.equal(event.defaultPrevented, true);
@@ -1684,6 +1723,117 @@ test("unrelated guest key is neither suppressed nor dispatched", () => {
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
+for (const shortcut of [
+  { label: "Ctrl+A", key: "a", code: "KeyA" },
+  { label: "Ctrl+C", key: "c", code: "KeyC" },
+  { label: "Ctrl+V", key: "v", code: "KeyV" }
+]) {
+  test(`${shortcut.label} remains a browser shortcut when it is not an Obsidian hotkey`, () => {
+    const fixture = keyboardFixture();
+    fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
+
+    const event = emitGuestKey(fixture, {
+      key: shortcut.key,
+      code: shortcut.code,
+      control: true
+    });
+
+    assert.equal(event.defaultPrevented, false);
+    assert.deepEqual(fixture.result.executed, []);
+    assert.equal(Boolean(fixture.plugin.keyboardKeyProbe), false);
+    fixture.plugin.releaseGuestKeyboard(fixture.webview);
+  });
+}
+
+test("ordinary composer text remains owned by Chromium", () => {
+  const fixture = keyboardFixture();
+  fixture.webview.composerFocused = true;
+  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
+
+  const event = emitGuestKey(fixture, { key: "g", code: "KeyG" });
+
+  assert.equal(event.defaultPrevented, false);
+  assert.deepEqual(fixture.result.executed, []);
+  assert.equal(Boolean(fixture.plugin.keyboardKeyProbe), false);
+  fixture.plugin.releaseGuestKeyboard(fixture.webview);
+});
+
+test("a non-tab Obsidian hotkey uses the same one-event arbitration", () => {
+  const fixture = keyboardFixture();
+  let customCalls = 0;
+  fixture.plugin.app.commands.commands["app:custom-hotkey"] = {};
+  fixture.plugin.app.hotkeyManager.customKeys["app:custom-hotkey"] = [
+    { modifiers: ["Ctrl", "Shift"], key: "k" }
+  ];
+  const execute = fixture.plugin.app.commands.executeCommandById;
+  fixture.plugin.app.commands.executeCommandById = (commandId) => {
+    if (commandId === "app:custom-hotkey") {
+      customCalls += 1;
+      return true;
+    }
+    return execute(commandId);
+  };
+  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
+
+  const event = emitGuestKey(fixture, {
+    key: "л",
+    code: "KeyK",
+    control: true,
+    shift: true
+  });
+
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(customCalls, 1);
+  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
+  assert.deepEqual(entry.matchingCommands, ["app:custom-hotkey"]);
+  assert.equal(entry.dispatchOwner, "plugin");
+  assert.equal(entry.dispatchAttemptCount, 1);
+  fixture.plugin.releaseGuestKeyboard(fixture.webview);
+});
+
+test("working core dispatch is verified for the event and plugin duplicate is suppressed", () => {
+  const fixture = keyboardFixture();
+  installCoreWebViewerKeyboardBridge(fixture);
+  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
+
+  emitShortcut(fixture, "next");
+
+  assert.equal(fixture.result.position, 1);
+  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
+  assert.equal(entry.coreListenerPresent, true);
+  assert.equal(entry.coreDispatchAttempted, true);
+  assert.equal(entry.coreDispatchVerified, true);
+  assert.equal(entry.coreBridgePresent, true);
+  assert.equal(entry.pluginDispatchAttempted, false);
+  assert.equal(entry.dispatchAttemptCount, 1);
+  assert.equal(entry.keymapCallCount, 1);
+  assert.equal(entry.executeCommandCalls.length, 1);
+  assert.equal(entry.executeCommandCalls[0].source, "core");
+  assert.equal(entry.duplicateSuppressed, true);
+  assert.equal(entry.finalHandledBy, "core");
+  fixture.plugin.releaseGuestKeyboard(fixture.webview);
+});
+
+test("inactive guest owner suppresses both core and plugin command dispatch", () => {
+  const fixture = keyboardFixture();
+  const markdownLeaf = { id: "leaf-markdown-active", view: { getViewType: () => "markdown" } };
+  fixture.plugin.app.workspace.activeLeaf = markdownLeaf;
+  installCoreWebViewerKeyboardBridge(fixture);
+  fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
+
+  const event = emitShortcut(fixture, "next");
+
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(fixture.result.position, 0);
+  assert.deepEqual(fixture.result.executed, []);
+  const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
+  assert.equal(entry.finalHandledBy, "suppressed-inactive-owner");
+  assert.equal(entry.commandMatched, false);
+  assert.equal(entry.ignoredReason, "active leaf is not guest owner");
+  assert.equal(entry.executeCommandCalls.length, 0);
+  fixture.plugin.releaseGuestKeyboard(fixture.webview);
+});
+
 test("already prevented guest input is not dispatched again", () => {
   const fixture = keyboardFixture();
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
@@ -1706,21 +1856,22 @@ test("already prevented guest input is not dispatched again", () => {
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("core bridge disappearance activates exactly one fallback path", () => {
+test("core listener disappearance leaves exactly one working arbiter path", () => {
   const fixture = keyboardFixture();
   const coreListener = installCoreWebViewerKeyboardBridge(fixture);
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
   removeCoreWebViewerKeyboardBridge(fixture, coreListener);
 
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
-  assert.equal(pluginFallbackListenerCount(fixture), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
+  assert.equal(pluginFallbackListenerCount(fixture), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("returning core bridge removes fallback before one key can dispatch twice", () => {
+test("a returning core bridge is verified per event and does not dispatch twice", () => {
   const fixture = keyboardFixture();
   const firstCoreListener = installCoreWebViewerKeyboardBridge(fixture);
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
@@ -1738,7 +1889,7 @@ test("returning core bridge removes fallback before one key can dispatch twice",
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
-test("host to guest focus trace exposes structural core ownership with zero dispatch", async () => {
+test("live failure fixture: a dead structural core listener falls back to one plugin dispatch", async () => {
   const fixture = keyboardFixture();
   const hostEvent = () => ({
     type: "keydown",
@@ -1765,19 +1916,30 @@ test("host to guest focus trace exposes structural core ownership with zero disp
 
   emitShortcut(fixture, "next");
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(fixture.result.position, 1, "B: focused guest produced zero additional dispatches");
+  assert.equal(fixture.result.position, 2, "B: focused guest dispatches exactly once through the arbiter");
   const entry = fixture.plugin.keyboardDiagnosticTrace.entries.findLast((candidate) =>
     candidate.phase === "before-input-event"
   );
   assert.equal(entry.beforeInputReached, true);
-  assert.equal(entry.ownershipDetection, "core");
+  assert.equal(entry.ownershipDetection, "plugin-arbiter");
   assert.equal(entry.coreListenerCount, 1);
+  assert.equal(entry.coreListenerPresent, true);
+  assert.equal(entry.coreBridgePresent, false);
   assert.equal(entry.fallbackAttached, false);
+  assert.equal(entry.pluginDispatcherAttached, true);
+  assert.equal(entry.coreDispatchAttempted, false);
+  assert.equal(entry.pluginDispatchAttempted, true);
+  assert.equal(entry.pluginDispatchAttemptCount, 1);
+  assert.equal(entry.dispatchAttemptCount, 1);
   assert.equal(entry.keymapReached, false);
-  assert.equal(entry.commandMatched, false);
+  assert.equal(entry.commandMatched, true);
+  assert.equal(entry.dispatchOwner, "plugin");
+  assert.equal(entry.finalHandledBy, "plugin");
+  assert.equal(entry.executeCommandCalls.length, 1);
+  assert.equal(entry.executeCommandCalls[0].source, "plugin");
 
   fixture.plugin.app.keymap.onKeyEvent(hostEvent());
-  assert.equal(fixture.result.position, 2, "D: returning to Markdown dispatches exactly once again");
+  assert.equal(fixture.result.position, 3, "D: returning to Markdown dispatches exactly once again");
   fixture.plugin.releaseGuestKeyboard(fixture.webview);
 });
 
@@ -1792,7 +1954,7 @@ test("SPA root to conversation navigation keeps one working keyboard path", () =
   fixture.plugin.removeWebviewBinding(fixture.webview);
 });
 
-test("repeated did-navigate-in-page never duplicates the fallback listener", () => {
+test("repeated did-navigate-in-page never duplicates the keyboard arbiter", () => {
   const fixture = bindKeyboardLifecycle(keyboardFixture());
   for (let index = 0; index < 40; index += 1) {
     fixture.webview.url = `https://chatgpt.com/c/repeated-${index}`;
@@ -1800,20 +1962,22 @@ test("repeated did-navigate-in-page never duplicates the fallback listener", () 
     assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
   }
 
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
   fixture.plugin.removeWebviewBinding(fixture.webview);
 });
 
-test("repeated dom-ready never duplicates the core or fallback path", () => {
+test("repeated dom-ready never duplicates the keyboard arbiter", () => {
   const fixture = bindKeyboardLifecycle(keyboardFixture());
   for (let index = 0; index < 40; index += 1) {
     fixture.webview.emit("dom-ready");
     assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
   }
 
-  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 1);
+  assert.equal(dispatchBeforeInputListenerCount(fixture.plugin, fixture.guest), 0);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
   fixture.plugin.removeWebviewBinding(fixture.webview);
@@ -1829,6 +1993,7 @@ test("repeated ChatGPT message lifecycle keeps hotkeys alive", () => {
   }
 
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   emitShortcut(fixture, "next");
   emitShortcut(fixture, "previous");
   assert.equal(fixture.result.position, 0);
@@ -1842,6 +2007,7 @@ test("textarea-focused ChatGPT composer still fires one configured Obsidian hotk
   fixture.plugin.ensureGuestKeyboardAttached(fixture.webview);
 
   assert.equal(activeKeyboardDispatchPathCount(fixture), 1);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
   assert.deepEqual(fixture.result.executed, ["workspace:next-tab"]);
@@ -1878,6 +2044,8 @@ test("A-E composer states are captured without changing the single core dispatch
     const entry = fixture.plugin.keyboardDiagnosticTrace.entries.at(-1);
     assert.deepEqual(entry.composer, state, state.label);
     assert.equal(entry.coreBridgePresent, true, state.label);
+    assert.equal(entry.coreListenerPresent, true, state.label);
+    assert.equal(entry.pluginDispatcherAttached, true, state.label);
     assert.equal(entry.fallbackAttached, false, state.label);
     assert.equal(entry.activeDispatchPathCount, 1, state.label);
     assert.equal(entry.activeLeafIsOwner, false, state.label);
@@ -1942,5 +2110,6 @@ test("long navigation focus and message lifecycle preserves one dispatch path", 
 
   emitShortcut(fixture, "next");
   assert.equal(fixture.result.position, 1);
+  assert.equal(pluginArbiterListenerCount(fixture), 1);
   fixture.plugin.removeWebviewBinding(fixture.webview);
 });

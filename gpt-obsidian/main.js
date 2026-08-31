@@ -1169,16 +1169,14 @@ class GptObsidianPlugin extends Plugin {
       newListener: null,
       removeListener: null,
       changingFallback: false,
+      lastCoreDispatchVerified: false,
+      lastDispatchOwner: null,
       webviews: new Set([webview])
     };
 
     const beforeInput = (event, input) => {
-      // A core listener can be installed after dom-ready. Re-check at dispatch
-      // time as a final guard so a late core bridge can never double-dispatch.
-      if (this.guestHasCoreKeyboardBridge(binding)) {
-        this.setGuestKeyboardFallback(binding, false);
-        return false;
-      }
+      // Retained only for cleanup/backward-compatible binding identity. The
+      // always-attached probe below is now the sole event arbiter.
       return this.handleGuestInput(event, input);
     };
 
@@ -1193,17 +1191,13 @@ class GptObsidianPlugin extends Plugin {
 
     const newListener = (eventName, listener) => {
       if (eventName !== "before-input-event" || listener === beforeInput || listener === beforeInputProbe) return;
-      if (!this.guestHasCoreKeyboardOwner(binding)) return;
-      // EventEmitter emits newListener before adding the new listener. Remove
-      // our fallback first so the guest transitions directly from fallback to
-      // core ownership without a +2 window.
-      this.setGuestKeyboardFallback(binding, false);
+      // Presence is diagnostic data only. A listener does not become the owner
+      // until it actually dispatches this physical event through app.keymap.
     };
 
     const removeListener = (eventName) => {
       if (eventName !== "before-input-event" || binding.changingFallback) return;
-      // removeListener is emitted after removal, so the actual listener set now
-      // tells us whether core disappeared or our fallback was removed externally.
+      // The plugin arbiter is independent from late core listener churn.
       this.reconcileGuestKeyboardBinding(binding);
     };
 
@@ -1258,7 +1252,7 @@ class GptObsidianPlugin extends Plugin {
     }
   }
 
-  coreWebViewerHandlesGuestKeyboard(webview, webContents, pluginListener = null, diagnosticListener = null) {
+  coreWebViewerHasKeyboardListener(webview, webContents, pluginListener = null, diagnosticListener = null) {
     if (!this.coreWebViewerCanConfigureGuestKeyboard(webview)) return false;
     return this.beforeInputListeners(webContents).some((listener) =>
       listener !== pluginListener && listener !== diagnosticListener
@@ -1272,8 +1266,8 @@ class GptObsidianPlugin extends Plugin {
   }
 
   guestHasCoreKeyboardBridge(binding) {
-    return [...binding.webviews].some((webview) =>
-      this.coreWebViewerHandlesGuestKeyboard(
+    return Boolean(binding.lastCoreDispatchVerified) && [...binding.webviews].some((webview) =>
+      this.coreWebViewerHasKeyboardListener(
         webview,
         binding.webContents,
         binding.beforeInput,
@@ -1299,7 +1293,13 @@ class GptObsidianPlugin extends Plugin {
   reconcileGuestKeyboardBinding(binding) {
     if (!binding || this.guestBindings.get(binding.id) !== binding) return;
     if (binding.webviews.size === 0 || binding.webContents.isDestroyed?.()) return;
-    this.setGuestKeyboardFallback(binding, !this.guestHasCoreKeyboardBridge(binding));
+    const listeners = this.beforeInputListeners(binding.webContents);
+    if (!listeners.includes(binding.beforeInputProbe)) {
+      binding.webContents.prependListener("before-input-event", binding.beforeInputProbe);
+    }
+    // The probe is the single deterministic arbiter. The old synchronous
+    // fallback must never coexist with it as a second command dispatcher.
+    this.setGuestKeyboardFallback(binding, false);
   }
 
   activeKeyboardDispatchPathCount(webview) {
@@ -1307,23 +1307,24 @@ class GptObsidianPlugin extends Plugin {
     const binding = id ? this.guestBindings.get(id) : null;
     if (!binding) return 0;
     const listeners = this.beforeInputListeners(binding.webContents);
-    const fallbackCount = listeners.includes(binding.beforeInput) ? 1 : 0;
-    const coreCount = this.coreWebViewerCanConfigureGuestKeyboard(webview)
-      ? listeners.filter((listener) =>
-        listener !== binding.beforeInput && listener !== binding.beforeInputProbe
-      ).length
-      : 0;
-    return fallbackCount + coreCount;
+    return listeners.includes(binding.beforeInputProbe) ? 1 : 0;
   }
 
-  matchingTabHotkeyCommands(input) {
+  matchingObsidianHotkeyCommands(input) {
+    if (!isPotentialObsidianShortcut(input)) return [];
     const commandsApi = this.app.commands;
     const hotkeyManager = this.app.hotkeyManager;
     const commands = commandsApi?.commands;
     if (!hotkeyManager || !commands) return [];
-    return ["workspace:next-tab", "workspace:previous-tab"].filter((commandId) =>
-      commands[commandId] && this.getEffectiveHotkeys(hotkeyManager, commandId)
+    return Object.keys(commands).filter((commandId) =>
+      this.getEffectiveHotkeys(hotkeyManager, commandId)
         .some((hotkey) => hotkeyMatchesInput(hotkey, input))
+    );
+  }
+
+  matchingTabHotkeyCommands(input) {
+    return this.matchingObsidianHotkeyCommands(input).filter((commandId) =>
+      commandId === "workspace:next-tab" || commandId === "workspace:previous-tab"
     );
   }
 
@@ -1339,13 +1340,17 @@ class GptObsidianPlugin extends Plugin {
         listener !== binding.beforeInput && listener !== binding.beforeInputProbe
       ).length
       : 0;
+    const pluginDispatcherAttached = listeners.includes(binding.beforeInputProbe);
     return {
       fallbackAttached,
       diagnosticAttached,
-      coreBridgePresent: coreListenerCount > 0,
+      pluginDispatcherAttached,
+      coreListenerPresent: coreListenerCount > 0,
+      coreBridgePresent: Boolean(binding.lastCoreDispatchVerified),
+      coreDispatchVerified: Boolean(binding.lastCoreDispatchVerified),
       coreListenerCount,
-      ownershipDetection: coreListenerCount > 0 ? "core" : (fallbackAttached ? "fallback" : "none"),
-      activeDispatchPathCount: (fallbackAttached ? 1 : 0) + coreListenerCount,
+      ownershipDetection: pluginDispatcherAttached ? "plugin-arbiter" : "none",
+      activeDispatchPathCount: pluginDispatcherAttached ? 1 : 0,
       beforeInputListenerCount: listeners.length,
       webContentsFocused: typeof binding.webContents.isFocused === "function"
         ? Boolean(binding.webContents.isFocused())
@@ -1378,11 +1383,87 @@ class GptObsidianPlugin extends Plugin {
     console.info("[GPT Obsidian][keyboard diagnostic]", entry);
   }
 
+  activeLeafOwnsGuestBinding(binding) {
+    const activeLeaf = this.app.workspace.activeLeaf || null;
+    if (!activeLeaf) return true;
+    return [...binding.webviews].some((webview) => this.findLeafForWebview(webview) === activeLeaf);
+  }
+
+  dispatchMatchedGuestCommand(probe) {
+    const commandsApi = this.app.commands;
+    if (!commandsApi || typeof commandsApi.executeCommandById !== "function") {
+      return { attempted: false, handled: false, commandId: null };
+    }
+    probe.pluginDispatching = true;
+    try {
+      for (const commandId of probe.matchingCommands) {
+        probe.pluginDispatchAttemptCount += 1;
+        let handled = false;
+        try {
+          handled = Boolean(commandsApi.executeCommandById(commandId));
+        } catch (error) {
+          console.error(`[GPT Obsidian] Failed to execute command ${commandId}:`, error);
+        }
+        if (handled) return { attempted: true, handled: true, commandId };
+      }
+      return { attempted: probe.pluginDispatchAttemptCount > 0, handled: false, commandId: null };
+    } finally {
+      probe.pluginDispatching = false;
+    }
+  }
+
   beginGuestKeyboardProbe(binding, event, input) {
     if (!binding || input?.type !== "keyDown") return;
-    const matchingCommands = this.matchingTabHotkeyCommands(input);
-    if (matchingCommands.length === 0) return;
+    const matchingCommands = this.matchingObsidianHotkeyCommands(input);
+    if (matchingCommands.length === 0) {
+      if (isPotentialObsidianShortcut(input)) queueMicrotask(() => this.recordKeyboardDiagnostic({
+        at: new Date().toISOString(),
+        phase: "before-input-event",
+        guestWebContentsId: binding.id,
+        physicalInputReceived: true,
+        matchingCommands: [],
+        input: this.keyboardInputSnapshot(input),
+        beforeInputReached: true,
+        electronDefaultPrevented: Boolean(event?.defaultPrevented),
+        dispatchOwner: "browser",
+        dispatchAttemptCount: 0,
+        keymapReached: false,
+        keymapCallCount: 0,
+        keymapCalls: [],
+        executeCommandCalls: [],
+        commandMatched: false,
+        duplicateSuppressed: false,
+        finalHandledBy: "browser",
+        ...this.keyboardOwnershipSnapshot(binding)
+      }));
+      return;
+    }
+    if (event?.defaultPrevented) {
+      queueMicrotask(() => this.recordKeyboardDiagnostic({
+        at: new Date().toISOString(),
+        phase: "before-input-event",
+        guestWebContentsId: binding.id,
+        physicalInputReceived: true,
+        matchingCommands,
+        input: this.keyboardInputSnapshot(input),
+        beforeInputReached: true,
+        electronDefaultPrevented: Boolean(event?.defaultPrevented),
+        dispatchOwner: "external",
+        dispatchAttemptCount: 0,
+        keymapReached: false,
+        keymapCallCount: 0,
+        keymapCalls: [],
+        executeCommandCalls: [],
+        commandMatched: false,
+        duplicateSuppressed: false,
+        finalHandledBy: "external",
+        ignoredReason: "physical input was already prevented before plugin arbitration",
+        ...this.keyboardOwnershipSnapshot(binding)
+      }));
+      return;
+    }
     if (this.keyboardKeyProbe) this.finishGuestKeyboardProbe(this.keyboardKeyProbe);
+    event?.preventDefault?.();
 
     const keymap = this.app.keymap;
     const commandsApi = this.app.commands;
@@ -1395,6 +1476,7 @@ class GptObsidianPlugin extends Plugin {
       event,
       input,
       matchingCommands,
+      activeLeafOwner: this.activeLeafOwnsGuestBinding(binding),
       startedAt: Date.now(),
       originalOnKeyEvent,
       originalExecuteCommandById,
@@ -1402,6 +1484,8 @@ class GptObsidianPlugin extends Plugin {
       commandWrapper: null,
       keymapCalls: [],
       commandCalls: [],
+      pluginDispatching: false,
+      pluginDispatchAttemptCount: 0,
       finished: false
     };
 
@@ -1410,17 +1494,21 @@ class GptObsidianPlugin extends Plugin {
         let result;
         let thrown = null;
         try {
-          result = originalOnKeyEvent.call(this, keyboardEvent);
+          result = probe.activeLeafOwner
+            ? originalOnKeyEvent.call(this, keyboardEvent)
+            : undefined;
           return result;
         } catch (error) {
           thrown = String(error);
           throw error;
         } finally {
           probe.keymapCalls.push({
+            source: probe.pluginDispatching ? "plugin" : "core",
             result: result === undefined ? "undefined" : String(result),
             defaultPrevented: Boolean(keyboardEvent?.defaultPrevented),
             code: keyboardEvent?.code || null,
             key: keyboardEvent?.key || null,
+            suppressed: !probe.activeLeafOwner,
             thrown
           });
         }
@@ -1429,8 +1517,15 @@ class GptObsidianPlugin extends Plugin {
     }
     if (originalExecuteCommandById) {
       probe.commandWrapper = function keyboardDiagnosticExecuteCommand(commandId, ...args) {
-        const result = originalExecuteCommandById.call(this, commandId, ...args);
-        probe.commandCalls.push({ commandId, result: Boolean(result) });
+        const source = probe.pluginDispatching ? "plugin" : "core";
+        const suppressed = source === "core" && !probe.activeLeafOwner;
+        const result = suppressed ? false : originalExecuteCommandById.call(this, commandId, ...args);
+        probe.commandCalls.push({
+          source,
+          commandId,
+          result: Boolean(result),
+          suppressed
+        });
         return result;
       };
       commandsApi.executeCommandById = probe.commandWrapper;
@@ -1445,30 +1540,52 @@ class GptObsidianPlugin extends Plugin {
     if (!probe || probe.finished) return;
     probe.finished = true;
     if (this.keyboardKeyProbe === probe) this.keyboardKeyProbe = null;
+    const coreCommandCalls = probe.commandCalls.filter((call) => call.source === "core");
+    const coreKeymapCalls = probe.keymapCalls.filter((call) => call.source === "core");
+    const coreHandled = coreKeymapCalls.some((call) =>
+      call.result === "false" || call.defaultPrevented
+    ) || coreCommandCalls.some((call) =>
+      probe.matchingCommands.includes(call.commandId) && !call.suppressed
+    );
+    const coreAttempted = coreKeymapCalls.length > 0 || coreCommandCalls.length > 0;
+    const pluginResult = coreHandled || !probe.activeLeafOwner
+      ? { attempted: false, handled: false, commandId: null }
+      : this.dispatchMatchedGuestCommand(probe);
+    const finalHandledBy = !probe.activeLeafOwner
+      ? "suppressed-inactive-owner"
+      : (coreHandled ? "core" : (pluginResult.handled ? "plugin" : "none"));
+    probe.binding.lastCoreDispatchVerified = coreHandled;
+    probe.binding.lastDispatchOwner = finalHandledBy;
     if (probe.keymapWrapper && this.app.keymap?.onKeyEvent === probe.keymapWrapper) {
       this.app.keymap.onKeyEvent = probe.originalOnKeyEvent;
     }
     if (probe.commandWrapper && this.app.commands?.executeCommandById === probe.commandWrapper) {
       this.app.commands.executeCommandById = probe.originalExecuteCommandById;
     }
-    const commandMatched = probe.keymapCalls.some((call) =>
-      call.result === "false" || call.defaultPrevented
-    ) || probe.commandCalls.some((call) =>
-      probe.matchingCommands.includes(call.commandId) && call.result
-    );
+    const commandMatched = coreHandled || pluginResult.handled;
     const entry = {
       at: new Date().toISOString(),
       phase: "before-input-event",
       guestWebContentsId: probe.binding.id,
+      physicalInputReceived: true,
       matchingCommands: probe.matchingCommands,
       input: this.keyboardInputSnapshot(probe.input),
       beforeInputReached: true,
       electronDefaultPrevented: Boolean(probe.event?.defaultPrevented),
+      dispatchOwner: finalHandledBy,
+      coreDispatchAttempted: coreAttempted,
+      coreDispatchVerified: coreHandled,
+      pluginDispatchAttempted: pluginResult.attempted,
+      pluginDispatchAttemptCount: probe.pluginDispatchAttemptCount,
+      dispatchAttemptCount: (coreAttempted ? 1 : 0) + (pluginResult.attempted ? 1 : 0),
       keymapReached: probe.keymapCalls.length > 0,
       keymapCallCount: probe.keymapCalls.length,
       keymapCalls: probe.keymapCalls,
       executeCommandCalls: probe.commandCalls,
       commandMatched,
+      duplicateSuppressed: coreHandled && !pluginResult.attempted,
+      finalHandledBy,
+      ignoredReason: probe.activeLeafOwner ? null : "active leaf is not guest owner",
       ...this.keyboardOwnershipSnapshot(probe.binding)
     };
     this.recordKeyboardDiagnostic(entry);
@@ -1497,7 +1614,7 @@ class GptObsidianPlugin extends Plugin {
 
   async traceGuestKeyboardInput(binding, input) {
     if (!binding || input?.type !== "keyDown") return;
-    const matchingCommands = this.matchingTabHotkeyCommands(input);
+    const matchingCommands = this.matchingObsidianHotkeyCommands(input);
     if (matchingCommands.length === 0) return;
     const entry = {
       at: new Date().toISOString(),
