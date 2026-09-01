@@ -1454,6 +1454,34 @@ test("healthy guest keyboard binding is reused without duplicating its listener"
   assert.equal(guest.listenerCount("destroyed"), 1);
 });
 
+test("guest keyboard listener remains last without duplication and moves behind later foreign listeners", () => {
+  const { plugin, guest, webview } = keyboardFixture();
+  const binding = plugin.guestBindings.get(guest.id);
+  const core = () => undefined;
+  const foreign = () => undefined;
+
+  guest.on("before-input-event", core);
+  assert.deepEqual(guest.listeners("before-input-event"), [binding.beforeInput, core]);
+
+  plugin.attachGuestKeyboard(webview);
+  assert.deepEqual(guest.listeners("before-input-event"), [core, binding.beforeInput]);
+  assert.equal(plugin.guestBindings.get(guest.id), binding);
+
+  plugin.attachGuestKeyboard(webview);
+  assert.deepEqual(guest.listeners("before-input-event"), [core, binding.beforeInput]);
+  assert.equal(guest.listenerCount("before-input-event"), 2);
+
+  guest.on("before-input-event", foreign);
+  assert.deepEqual(guest.listeners("before-input-event"), [core, binding.beforeInput, foreign]);
+
+  plugin.attachGuestKeyboard(webview);
+  assert.deepEqual(guest.listeners("before-input-event"), [core, foreign, binding.beforeInput]);
+  assert.equal(plugin.guestBindings.get(guest.id), binding);
+  assert.equal(guest.listeners("before-input-event").filter((listener) => listener === core).length, 1);
+  assert.equal(guest.listeners("before-input-event").filter((listener) => listener === foreign).length, 1);
+  assert.equal(guest.listeners("before-input-event").filter((listener) => listener === binding.beforeInput).length, 1);
+});
+
 test("guest keyboard binding self-heals when its before-input-event listener disappears", () => {
   const { plugin, guest, webview } = keyboardFixture();
   const stale = plugin.guestBindings.get(guest.id);
@@ -1567,6 +1595,68 @@ test("workspace:previous-tab executes exactly once", () => {
   const event = guestKey(guest, modifiedKey("ArrowLeft", "ArrowLeft"));
 
   assert.deepEqual(calls, ["workspace:previous-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("CORE SUCCESS on Next Tab prevents GPT fallback double dispatch", () => {
+  const { plugin, guest, webview, calls } = keyboardFixture();
+  let coreDispatches = 0;
+  const core = (event) => {
+    coreDispatches += 1;
+    event.preventDefault();
+  };
+  guest.on("before-input-event", core);
+  plugin.attachGuestKeyboard(webview);
+
+  const binding = plugin.guestBindings.get(guest.id);
+  assert.deepEqual(guest.listeners("before-input-event"), [core, binding.beforeInput]);
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+
+  assert.equal(coreDispatches, 1);
+  assert.deepEqual(calls, []);
+  assert.equal(coreDispatches + calls.length, 1);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("CORE SUCCESS on Previous Tab prevents GPT fallback double dispatch", () => {
+  const { plugin, guest, webview, calls } = keyboardFixture({
+    commands: ["workspace:previous-tab"],
+    hotkeys: {
+      "workspace:previous-tab": [{ modifiers: ["Ctrl", "Alt"], key: "ArrowLeft" }]
+    }
+  });
+  let coreDispatches = 0;
+  const core = (event) => {
+    coreDispatches += 1;
+    event.preventDefault();
+  };
+  guest.on("before-input-event", core);
+  plugin.attachGuestKeyboard(webview);
+
+  const event = guestKey(guest, modifiedKey("ArrowLeft", "ArrowLeft"));
+
+  assert.equal(coreDispatches, 1);
+  assert.deepEqual(calls, []);
+  assert.equal(coreDispatches + calls.length, 1);
+  assert.equal(event.preventDefaultCalls, 1);
+});
+
+test("CORE FAILURE keeps GPT fallback active despite a foreign listener", () => {
+  const { plugin, guest, webview, calls } = keyboardFixture();
+  let coreListenerCalls = 0;
+  let coreDispatches = 0;
+  const core = () => {
+    coreListenerCalls += 1;
+  };
+  guest.on("before-input-event", core);
+  plugin.attachGuestKeyboard(webview);
+
+  const event = guestKey(guest, modifiedKey("ArrowRight", "ArrowRight"));
+
+  assert.equal(coreListenerCalls, 1);
+  assert.equal(coreDispatches, 0);
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(coreDispatches + calls.length, 1);
   assert.equal(event.preventDefaultCalls, 1);
 });
 

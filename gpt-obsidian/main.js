@@ -1118,15 +1118,44 @@ class GptObsidianPlugin extends Plugin {
     };
 
     const previous = this.guestBindings.get(id);
-    let healthy = false;
+    let previousListeners = null;
     if (previous && previous.webContents === webContents && !isDestroyed(webContents)) {
       try {
-        healthy = typeof webContents.listeners === "function" &&
-          webContents.listeners("before-input-event").includes(previous.beforeInput);
+        if (typeof webContents.listeners === "function") {
+          previousListeners = webContents.listeners("before-input-event");
+        }
       } catch (_) {}
     }
 
-    if (healthy) return;
+    if (previousListeners) {
+      const ownListenerCount = previousListeners.filter((listener) =>
+        listener === previous.beforeInput
+      ).length;
+      const ownListenerIsLast = ownListenerCount === 1 &&
+        previousListeners[previousListeners.length - 1] === previous.beforeInput;
+
+      if (ownListenerIsLast) return;
+
+      if (ownListenerCount > 0) {
+        try {
+          for (let index = 0; index < ownListenerCount; index += 1) {
+            webContents.removeListener("before-input-event", previous.beforeInput);
+          }
+          webContents.on("before-input-event", previous.beforeInput);
+
+          const reorderedListeners = webContents.listeners("before-input-event");
+          const reorderedOwnCount = reorderedListeners.filter((listener) =>
+            listener === previous.beforeInput
+          ).length;
+          if (!isDestroyed(webContents) && reorderedOwnCount === 1 &&
+              reorderedListeners[reorderedListeners.length - 1] === previous.beforeInput) {
+            return;
+          }
+        } catch (error) {
+          this.warnRemote(error);
+        }
+      }
+    }
 
     if (previous) {
       if (typeof previous.dispose === "function") {
@@ -1178,6 +1207,7 @@ class GptObsidianPlugin extends Plugin {
 
   handleGuestInput(event, input) {
     if (!isPotentialObsidianShortcut(input)) return;
+    if (event?.defaultPrevented === true) return;
 
     const commandsApi = this.app.commands;
     const hotkeyManager = this.app.hotkeyManager;
