@@ -748,13 +748,17 @@ class GptObsidianPlugin extends Plugin {
     }
     this.boundWebviews.clear();
 
-    for (const [id, binding] of this.guestBindings) {
+    for (const binding of [...this.guestBindings.values()]) {
+      if (typeof binding.dispose === "function") {
+        binding.dispose();
+        continue;
+      }
       try {
         binding.webContents.removeListener("before-input-event", binding.beforeInput);
         binding.webContents.removeListener("destroyed", binding.destroyed);
       } catch (_) {}
-      this.guestBindings.delete(id);
     }
+    this.guestBindings.clear();
 
     this.stopBridgeSessionWatch();
     this.restoreCopilotNativeUiTrace();
@@ -1097,29 +1101,79 @@ class GptObsidianPlugin extends Plugin {
     let webContents;
     try {
       id = webview.getWebContentsId();
-      if (!id || this.guestBindings.has(id)) return;
+      if (!id) return;
       webContents = this.remote.webContents.fromId(id);
     } catch (error) {
       this.warnRemote(error);
       return;
     }
 
-    if (!webContents || webContents.isDestroyed?.()) return;
-
-    const beforeInput = (event, input) => this.handleGuestInput(event, input);
-
-    const destroyed = () => {
-      const guestBinding = this.guestBindings.get(id);
-      if (!guestBinding) return;
+    const isDestroyed = (guest) => {
+      if (!guest) return true;
       try {
-        guestBinding.webContents.removeListener("before-input-event", guestBinding.beforeInput);
-      } catch (_) {}
-      this.guestBindings.delete(id);
+        return Boolean(guest.isDestroyed?.());
+      } catch (_) {
+        return true;
+      }
     };
 
-    webContents.on("before-input-event", beforeInput);
-    webContents.once("destroyed", destroyed);
-    this.guestBindings.set(id, { webContents, beforeInput, destroyed });
+    const previous = this.guestBindings.get(id);
+    let healthy = false;
+    if (previous && previous.webContents === webContents && !isDestroyed(webContents)) {
+      try {
+        healthy = typeof webContents.listeners === "function" &&
+          webContents.listeners("before-input-event").includes(previous.beforeInput);
+      } catch (_) {}
+    }
+
+    if (healthy) return;
+
+    if (previous) {
+      if (typeof previous.dispose === "function") {
+        previous.dispose();
+      } else {
+        try {
+          previous.webContents?.removeListener("before-input-event", previous.beforeInput);
+          previous.webContents?.removeListener("destroyed", previous.destroyed);
+        } catch (_) {}
+        if (this.guestBindings.get(id) === previous) this.guestBindings.delete(id);
+      }
+    }
+
+    if (isDestroyed(webContents)) return;
+
+    const beforeInput = (event, input) => this.handleGuestInput(event, input);
+    const binding = {
+      id,
+      webContents,
+      beforeInput,
+      destroyed: null,
+      dispose: null,
+      disposed: false
+    };
+
+    const dispose = () => {
+      if (binding.disposed) return;
+      binding.disposed = true;
+      try {
+        webContents.removeListener("before-input-event", beforeInput);
+        webContents.removeListener("destroyed", destroyed);
+      } catch (_) {}
+      if (this.guestBindings.get(id) === binding) this.guestBindings.delete(id);
+    };
+    const destroyed = () => dispose();
+    binding.destroyed = destroyed;
+    binding.dispose = dispose;
+
+    this.guestBindings.set(id, binding);
+    try {
+      webContents.on("before-input-event", beforeInput);
+      webContents.once("destroyed", destroyed);
+      if (isDestroyed(webContents)) dispose();
+    } catch (error) {
+      dispose();
+      this.warnRemote(error);
+    }
   }
 
   handleGuestInput(event, input) {

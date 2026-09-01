@@ -129,7 +129,8 @@ function keyboardFixture({
   const guest = new FakeGuest(id);
   const webview = new FakeWebview(id, true, `https://chatgpt.com/c/keyboard-${id}`);
   const leaf = { id: `leaf-keyboard-${id}`, view: { webview, containerEl: null } };
-  const plugin = makePlugin(leaf, new Map([[id, guest]]));
+  const guests = new Map([[id, guest]]);
+  const plugin = makePlugin(leaf, guests);
   const calls = [];
   plugin.app.workspace.activeLeaf = leaf;
   plugin.app.commands.commands = Object.fromEntries(commands.map((commandId) => [commandId, { id: commandId }]));
@@ -145,7 +146,7 @@ function keyboardFixture({
   GptObsidianPlugin.prototype.bindWebview.call(plugin, webview);
   webview.emit("dom-ready");
 
-  return { plugin, guest, webview, leaf, calls };
+  return { plugin, guest, guests, webview, leaf, calls };
 }
 
 function keyboardEvent() {
@@ -1440,6 +1441,112 @@ test("WebViewer lifecycle attaches exactly one plugin keyboard listener after do
   guest.emit("destroyed");
   assert.equal(guest.listenerCount("before-input-event"), 0);
   assert.equal(plugin.guestBindings.size, 0);
+});
+
+test("healthy guest keyboard binding is reused without duplicating its listener", () => {
+  const { plugin, guest, webview } = keyboardFixture();
+  const original = plugin.guestBindings.get(guest.id);
+
+  plugin.attachGuestKeyboard(webview);
+
+  assert.equal(plugin.guestBindings.get(guest.id), original);
+  assert.equal(guest.listenerCount("before-input-event"), 1);
+  assert.equal(guest.listenerCount("destroyed"), 1);
+});
+
+test("guest keyboard binding self-heals when its before-input-event listener disappears", () => {
+  const { plugin, guest, webview } = keyboardFixture();
+  const stale = plugin.guestBindings.get(guest.id);
+  guest.removeListener("before-input-event", stale.beforeInput);
+
+  plugin.attachGuestKeyboard(webview);
+
+  const replacement = plugin.guestBindings.get(guest.id);
+  assert.notEqual(replacement, stale);
+  assert.equal(replacement.webContents, guest);
+  assert.equal(guest.listeners("before-input-event").includes(replacement.beforeInput), true);
+  assert.equal(guest.listenerCount("before-input-event"), 1);
+  assert.equal(guest.listenerCount("destroyed"), 1);
+});
+
+test("same guest id with a different webContents instance replaces the stale keyboard binding", () => {
+  const { plugin, guest, guests, webview } = keyboardFixture();
+  const stale = plugin.guestBindings.get(guest.id);
+  const replacementGuest = new FakeGuest(guest.id);
+  guests.set(guest.id, replacementGuest);
+
+  plugin.attachGuestKeyboard(webview);
+
+  const replacement = plugin.guestBindings.get(guest.id);
+  assert.notEqual(replacement, stale);
+  assert.equal(replacement.webContents, replacementGuest);
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(guest.listenerCount("destroyed"), 0);
+  assert.equal(replacementGuest.listenerCount("before-input-event"), 1);
+  assert.equal(replacementGuest.listenerCount("destroyed"), 1);
+});
+
+test("stale destroyed callback cannot remove a replacement guest keyboard binding", () => {
+  const { plugin, guest, guests, webview } = keyboardFixture();
+  const stale = plugin.guestBindings.get(guest.id);
+  const replacementGuest = new FakeGuest(guest.id);
+  guests.set(guest.id, replacementGuest);
+  plugin.attachGuestKeyboard(webview);
+  const replacement = plugin.guestBindings.get(guest.id);
+
+  stale.destroyed();
+
+  assert.equal(plugin.guestBindings.get(guest.id), replacement);
+  assert.equal(replacementGuest.listenerCount("before-input-event"), 1);
+});
+
+test("stale dispose cannot remove a replacement guest keyboard binding", () => {
+  const { plugin, guest, guests, webview } = keyboardFixture();
+  const stale = plugin.guestBindings.get(guest.id);
+  const replacementGuest = new FakeGuest(guest.id);
+  guests.set(guest.id, replacementGuest);
+  plugin.attachGuestKeyboard(webview);
+  const replacement = plugin.guestBindings.get(guest.id);
+
+  stale.dispose();
+
+  assert.equal(plugin.guestBindings.get(guest.id), replacement);
+  assert.equal(replacementGuest.listenerCount("before-input-event"), 1);
+});
+
+test("destroyed current guest does not retain a keyboard listener or live binding", () => {
+  const id = 503;
+  const guest = new FakeGuest(id);
+  guest.destroyed = true;
+  const webview = new FakeWebview(id, true, "https://chatgpt.com/c/destroyed-keyboard");
+  const leaf = { id: "leaf-destroyed-keyboard", view: { webview, containerEl: null } };
+  const plugin = makePlugin(leaf, new Map([[id, guest]]));
+  plugin.boundWebviews.set(webview, { domReadySeen: true });
+
+  plugin.attachGuestKeyboard(webview);
+
+  assert.equal(guest.listenerCount("before-input-event"), 0);
+  assert.equal(guest.listenerCount("destroyed"), 0);
+  assert.equal(plugin.guestBindings.has(id), false);
+});
+
+test("WebViewer activation self-heals a missing listener and replaced guest before dispatch", () => {
+  const { plugin, guest, guests, webview, calls } = keyboardFixture();
+  const stale = plugin.guestBindings.get(guest.id);
+  guest.removeListener("before-input-event", stale.beforeInput);
+  const replacementGuest = new FakeGuest(guest.id);
+  guests.set(guest.id, replacementGuest);
+  plugin.bindWebview = GptObsidianPlugin.prototype.bindWebview.bind(plugin);
+
+  plugin.probeActiveLeaf(plugin.activationSerial);
+
+  const replacement = plugin.guestBindings.get(guest.id);
+  assert.notEqual(replacement, stale);
+  assert.equal(replacement.webContents, replacementGuest);
+  assert.equal(replacementGuest.listenerCount("before-input-event"), 1);
+  const event = guestKey(replacementGuest, modifiedKey("ArrowRight", "ArrowRight"));
+  assert.deepEqual(calls, ["workspace:next-tab"]);
+  assert.equal(event.preventDefaultCalls, 1);
 });
 
 test("workspace:next-tab executes exactly once and prevents the handled physical event", () => {
