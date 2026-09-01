@@ -19,6 +19,22 @@
       "mobile": true
     },
     {
+      "id": "browser-gpt-obsidian",
+      "name": "Browser GPT Obsidian",
+      "version": "1.2.9",
+      "path": "browser-gpt-obsidian",
+      "sourcePath": "browser-gpt-obsidian/dev-source",
+      "sourceHash": "4de9b5881bf693947dba418b312047f69246ace792efb9c8443691ad67690c7b",
+      "runtimeHash": "7bd2b9b4373f7bc170d5cf82632b46e49d806e1c526866afbb75b30080ba8e0f",
+      "runtimeFiles": [
+        "main.js",
+        "manifest.json"
+      ],
+      "sourceComplete": true,
+      "isDesktopOnly": true,
+      "mobile": false
+    },
+    {
       "id": "experience",
       "name": "Опыт",
       "version": "0.9.0",
