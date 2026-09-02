@@ -2,12 +2,15 @@
 .gpt-obsidian-native-view {
   padding: 0;
   overflow: hidden;
-  background: var(--background-primary, #111111);
+  background: #000;
+  color-scheme: dark;
 }
 
 .gpt-obsidian-native-view {
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .gpt-obsidian-native-view > webview[data-gpt-obsidian-owned="true"] {
@@ -15,4 +18,5 @@
   width: 100%;
   height: 100%;
   border: 0;
+  background: #000;
 }
