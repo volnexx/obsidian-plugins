@@ -26,7 +26,7 @@ const preload = require("./preload.js");
 function event(overrides = {}) {
   return {
     code: "KeyK", key: "k", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
-    repeat: false, isComposing: false, prevented: 0, stopped: 0,
+    repeat: false, isComposing: false, isTrusted: true, prevented: 0, stopped: 0,
     preventDefault() { this.prevented += 1; }, stopPropagation() { this.stopped += 1; }, ...overrides
   };
 }
@@ -36,7 +36,10 @@ test("C preload keyboard: physical code survives Russian layout", () => {
   preload.applyHotkeyConfig({ version: 1, hotkeys: [{ token: "previous", key: "[", ctrl: true, shift: true }] });
   sent.length = 0; const input = event({ code: "BracketLeft", key: "х", ctrlKey: true, shiftKey: true });
   assert.equal(preload.handleKeydown(input), true); assert.equal(input.prevented, 1); assert.equal(input.stopped, 1);
-  assert.equal(sent.length, 1); assert.equal(sent[0].payload.code, "BracketLeft");
+  const keyboard = sent.filter((message) => message.channel === preload.CHANNELS.KEYBOARD);
+  assert.equal(keyboard.length, 1); assert.equal(keyboard[0].payload.code, "BracketLeft");
+  const trace = sent.find((message) => message.channel === preload.CHANNELS.DIAGNOSTIC).payload;
+  assert.deepEqual({ matched: trace.matched, token: trace.hotkeyToken, sent: trace.keyboardIpcSent }, { matched: true, token: "previous", sent: true });
 });
 
 test("C preload keyboard: one event sends exactly one immediate host message", () => {
@@ -80,7 +83,7 @@ test("C preload keyboard: config validates and deduplicates opaque tokens", () =
   assert.equal(preload.applyHotkeyConfig({ version: 999, hotkeys: [] }), false);
   assert.equal(preload.applyHotkeyConfig({ version: 1, hotkeys: [null, { token: "same", key: "k" }, { token: "same", key: "x" }] }), true);
   sent.length = 0; preload.handleKeydown(event({ code: "KeyK", key: "k" })); preload.handleKeydown(event({ code: "KeyX", key: "x" }));
-  assert.equal(sent.length, 1);
+  assert.equal(sent.filter((message) => message.channel === preload.CHANNELS.KEYBOARD).length, 1);
 });
 
 test("B preload security: install is idempotent and exposes only a narrow write-only fallback", () => {
@@ -103,11 +106,32 @@ test("B preload security: install is idempotent and exposes only a narrow write-
 test("B appearance: validates palette and replaces one stable style element", () => {
   const styles = new Map(); const head = { appendChild(node) { styles.set(node.id, node); } };
   global.document = { head, documentElement: head, getElementById(id) { return styles.get(id) || null; }, createElement() { return {}; } };
-  const payload = { version: 1, palette: { textColor: "rgb(1, 2, 3)", negative: "#abcdef", negativeHover: "rgb(4, 5, 6)" } };
+  global.CSS = { supports(property, value) { return property === "color" && !/[;{}]/u.test(value); } };
+  global.window = { ...(global.window || {}), getComputedStyle: () => ({ getPropertyValue(name) {
+    const text = styles.get("gpt-obsidian-native-appearance")?.textContent || "";
+    return new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s*:\\s*([^;]+)`, "u").exec(text)?.[1]?.replace(/!important/gu, "").trim() || "";
+  } }) };
+  const payload = { version: 1, palette: { textColor: "oklch(0.9 0.02 250)", negative: "#abcdef", negativeHover: "rgb(4, 5, 6)" } };
   assert.equal(preload.applyAppearance(payload), true); const first = styles.get("gpt-obsidian-native-appearance");
   assert.match(first.textContent, /--gpt-obsidian-negative: #abcdef/u);
+  assert.match(first.textContent, /--text-quaternary:/u); assert.match(first.textContent, /send-button[^}]+svg/isu);
   assert.equal(preload.applyAppearance(payload), true); assert.equal(styles.get("gpt-obsidian-native-appearance"), first);
-  assert.equal(preload.applyAppearance({ version: 1, palette: { textColor: "red;display:none", negative: "#fff", negativeHover: "#fff" } }), false);
+  assert.deepEqual(preload.applyAppearanceDetailed({ version: 1, palette: { textColor: "red;display:none", negative: "#fff", negativeHover: "#fff" } }).reason, "text-color-invalid");
+});
+
+test("B/C diagnostics: CONFIG and APPEARANCE acknowledge real preload results", () => {
+  const styles = new Map(); const root = { appendChild(node) { styles.set(node.id, node); } };
+  global.document = { head: root, documentElement: root, getElementById(id) { return styles.get(id) || null; }, createElement() { return {}; } };
+  global.CSS = { supports(property, value) { return property === "color" && !/[;{}]/u.test(value); } };
+  global.window = { ...(global.window || {}), getComputedStyle: () => ({ getPropertyValue: () => "" }) };
+  sent.length = 0;
+  assert.equal(preload.reportHotkeyConfig({ version: 1, hotkeys: [{ token: "one", key: "]", ctrl: true, shift: true }] }), true);
+  const config = sent.find((message) => message.channel === preload.CHANNELS.DIAGNOSTIC && message.payload.area === "hotkeys").payload;
+  assert.deepEqual({ received: config.receivedCount, accepted: config.acceptedCount, reason: config.reason }, { received: 1, accepted: 1, reason: "accepted" });
+  sent.length = 0;
+  assert.equal(preload.reportAppearance({ version: 1, palette: { textColor: "#fff", negative: "#000", negativeHover: "rgb(1, 2, 3)" } }), true);
+  const appearance = sent.find((message) => message.channel === preload.CHANNELS.DIAGNOSTIC && message.payload.area === "appearance").payload;
+  assert.equal(appearance.applied, true); assert.equal(appearance.styleExists, true); assert.equal(appearance.reason, "applied");
 });
 
 test("B clipboard: 100 B, 10 KiB, 100 KiB, Unicode, and markdown preserve exact text", () => {

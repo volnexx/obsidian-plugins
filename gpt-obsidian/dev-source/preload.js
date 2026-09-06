@@ -20,7 +20,8 @@ const CHANNELS = Object.freeze({
   BRIDGE_RESPONSE: "gpt-obsidian:bridge-response",
   BRIDGE_ERROR: "gpt-obsidian:bridge-error",
   CLIPBOARD_WRITE: "gpt-obsidian:clipboard-write",
-  CLIPBOARD_RESULT: "gpt-obsidian:clipboard-result"
+  CLIPBOARD_RESULT: "gpt-obsidian:clipboard-result",
+  DIAGNOSTIC: "gpt-obsidian:diagnostic"
 });
 
 const CODE_TO_KEY = Object.freeze({
@@ -51,37 +52,56 @@ function normalizeClipboardPayload(value) {
 
 function normalizeCssColor(value) {
   const color = typeof value === "string" ? value.trim() : "";
-  if (!color || color.length > 80 || !/^(?:#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/iu.test(color)) return null;
-  return color;
+  if (!color || color.length > 80 || /[;{}\r\n]/u.test(color)) return null;
+  try { if (typeof CSS !== "undefined" && CSS.supports?.("color", color)) return color; } catch (_) {}
+  return /^(?:#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/iu.test(color) ? color : null;
 }
 
-function applyAppearance(payload) {
-  if (payload?.version !== PROTOCOL_VERSION) return false;
+function appearanceCssVars() {
+  try {
+    const styles = window.getComputedStyle?.(document.documentElement);
+    return {
+      textColor: styles?.getPropertyValue?.("--gpt-obsidian-text-color")?.trim?.() || "",
+      negative: styles?.getPropertyValue?.("--gpt-obsidian-negative")?.trim?.() || "",
+      negativeHover: styles?.getPropertyValue?.("--gpt-obsidian-negative-hover")?.trim?.() || ""
+    };
+  } catch (_) { return { textColor: "", negative: "", negativeHover: "" }; }
+}
+
+function applyAppearanceDetailed(payload) {
+  if (payload?.version !== PROTOCOL_VERSION) return { applied: false, reason: "version-invalid", styleExists: false, cssVars: appearanceCssVars() };
   const textColor = normalizeCssColor(payload?.palette?.textColor);
   const negative = normalizeCssColor(payload?.palette?.negative);
   const negativeHover = normalizeCssColor(payload?.palette?.negativeHover);
-  if (!textColor || !negative || !negativeHover) return false;
+  if (!textColor) return { applied: false, reason: "text-color-invalid", styleExists: false, cssVars: appearanceCssVars() };
+  if (!negative) return { applied: false, reason: "negative-color-invalid", styleExists: false, cssVars: appearanceCssVars() };
+  if (!negativeHover) return { applied: false, reason: "negative-hover-color-invalid", styleExists: false, cssVars: appearanceCssVars() };
   const root = document.head || document.documentElement;
-  if (!root) return false;
+  if (!root) return { applied: false, reason: "document-root-unavailable", styleExists: false, cssVars: appearanceCssVars() };
   const styleId = "gpt-obsidian-native-appearance";
-  let style = document.getElementById?.(styleId);
-  if (!style) {
-    style = document.createElement("style");
-    style.id = styleId;
-    root.appendChild(style);
-  }
-  style.textContent = `
+  try {
+    let style = document.getElementById?.(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      root.appendChild(style);
+    }
+    style.textContent = `
 :root {
   --gpt-obsidian-text-color: ${textColor};
   --gpt-obsidian-negative: ${negative};
   --gpt-obsidian-negative-hover: ${negativeHover};
+
   --text-primary: ${textColor} !important;
   --text-secondary: ${textColor} !important;
   --text-tertiary: ${textColor} !important;
+  --text-quaternary: ${textColor} !important;
   --text-placeholder: ${textColor} !important;
+
   --composer-blue-bg: ${negative} !important;
   --composer-blue-hover: ${negativeHover} !important;
 }
+
 body :where(
   div, p, span, a, button, label, textarea, input,
   [contenteditable="true"], [role="button"], [role="menuitem"],
@@ -90,30 +110,57 @@ body :where(
 ):not(pre):not(pre *):not(code):not(code *) {
   color: var(--gpt-obsidian-text-color) !important;
 }
-#prompt-textarea, [data-testid="prompt-textarea"], textarea, input {
+
+#prompt-textarea,
+[data-testid="prompt-textarea"],
+textarea,
+input {
   color: var(--gpt-obsidian-text-color) !important;
   caret-color: var(--gpt-obsidian-text-color) !important;
 }
-#prompt-textarea::placeholder, [data-testid="prompt-textarea"]::placeholder,
-textarea::placeholder, input::placeholder, [data-placeholder]::before {
+
+#prompt-textarea::placeholder,
+[data-testid="prompt-textarea"]::placeholder,
+textarea::placeholder,
+input::placeholder,
+[data-placeholder]::before {
   color: var(--gpt-obsidian-text-color) !important;
+  opacity: 0.72 !important;
 }
+
 [data-message-author-role="user"] .user-message-bubble-color,
 [data-message-author-role="user"] [class*="user-message-bubble"],
 [data-message-author-role="user"] [class*="bg-token-message-surface"] {
   background-color: var(--gpt-obsidian-negative) !important;
 }
-button[data-testid="send-button"], [data-testid="send-button"] {
+
+button[data-testid="send-button"],
+[data-testid="send-button"] {
   background-color: var(--gpt-obsidian-negative) !important;
   border-color: var(--gpt-obsidian-negative) !important;
   color: var(--gpt-obsidian-text-color) !important;
 }
-button[data-testid="send-button"]:hover, [data-testid="send-button"]:hover {
+
+button[data-testid="send-button"]:hover,
+[data-testid="send-button"]:hover {
   background-color: var(--gpt-obsidian-negative-hover) !important;
   border-color: var(--gpt-obsidian-negative-hover) !important;
-}`;
-  return true;
 }
+
+button[data-testid="send-button"] svg,
+[data-testid="send-button"] svg {
+  color: var(--gpt-obsidian-text-color) !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}`;
+    const styleExists = Boolean(document.getElementById?.(styleId) || style);
+    return { applied: styleExists, reason: styleExists ? "applied" : "style-missing-after-insert", styleExists, cssVars: appearanceCssVars() };
+  } catch (error) {
+    return { applied: false, reason: `exception:${String(error?.message || error).slice(0, 160)}`, styleExists: Boolean(document.getElementById?.(styleId)), cssVars: appearanceCssVars() };
+  }
+}
+
+function applyAppearance(payload) { return applyAppearanceDetailed(payload).applied; }
 
 function isCopyButtonEvent(event) {
   if (event?.isTrusted !== true) return false;
@@ -254,16 +301,32 @@ function descriptorMatchesEvent(descriptor, event) {
 }
 
 function send(channel, payload) {
-  try { ipcRenderer.sendToHost(channel, payload); } catch (_) {}
+  try { ipcRenderer.sendToHost(channel, payload); return true; } catch (_) { return false; }
 }
 
 function handleKeydown(event) {
   if (event?.isTrusted === false) return false;
+  const guestFocused = typeof document === "undefined" || typeof document.hasFocus !== "function" ? true : document.hasFocus();
   const descriptor = hotkeys.find((candidate) => descriptorMatchesEvent(candidate, event));
-  if (!descriptor) return false;
+  const diagnostic = {
+    version: PROTOCOL_VERSION,
+    area: "keyboard",
+    event: "keydown",
+    key: String(event?.key || "").slice(0, 64),
+    code: String(event?.code || "").slice(0, 64),
+    ctrl: Boolean(event?.ctrlKey),
+    meta: Boolean(event?.metaKey),
+    alt: Boolean(event?.altKey),
+    shift: Boolean(event?.shiftKey),
+    guestFocused,
+    matched: Boolean(descriptor),
+    hotkeyToken: descriptor?.token || null,
+    keyboardIpcSent: false
+  };
+  if (!descriptor) { send(CHANNELS.DIAGNOSTIC, diagnostic); return false; }
   event.preventDefault();
   event.stopPropagation?.();
-  send(CHANNELS.KEYBOARD, {
+  diagnostic.keyboardIpcSent = send(CHANNELS.KEYBOARD, {
     version: PROTOCOL_VERSION,
     token: descriptor.token,
     code: String(event.code || "").slice(0, 64),
@@ -271,8 +334,10 @@ function handleKeydown(event) {
     ctrl: Boolean(event.ctrlKey),
     meta: Boolean(event.metaKey),
     alt: Boolean(event.altKey),
-    shift: Boolean(event.shiftKey)
+    shift: Boolean(event.shiftKey),
+    guestFocused
   });
+  send(CHANNELS.DIAGNOSTIC, diagnostic);
   return true;
 }
 
@@ -506,14 +571,35 @@ function applyHotkeyConfig(payload) {
   return true;
 }
 
+function reportHotkeyConfig(payload) {
+  const receivedCount = Array.isArray(payload?.hotkeys) ? payload.hotkeys.length : 0;
+  const accepted = applyHotkeyConfig(payload);
+  send(CHANNELS.DIAGNOSTIC, {
+    version: PROTOCOL_VERSION, area: "hotkeys", event: "config",
+    receivedCount, acceptedCount: accepted ? hotkeys.length : 0,
+    accepted, reason: accepted ? "accepted" : "invalid-config"
+  });
+  return accepted;
+}
+
+function reportAppearance(payload) {
+  const result = applyAppearanceDetailed(payload);
+  send(CHANNELS.DIAGNOSTIC, {
+    version: PROTOCOL_VERSION, area: "appearance", event: "apply", received: true,
+    applied: result.applied, reason: result.reason, styleExists: result.styleExists,
+    cssVars: result.cssVars
+  });
+  return result.applied;
+}
+
 function install() {
   if (installed || typeof window === "undefined" || typeof document === "undefined") return false;
   installed = true;
   window.addEventListener("keydown", handleKeydown, true);
   window.addEventListener("click", handleCopyClick, true);
   installClipboardPageBridge();
-  ipcRenderer.on(CHANNELS.CONFIG, (_event, payload) => applyHotkeyConfig(payload));
-  ipcRenderer.on(CHANNELS.APPEARANCE, (_event, payload) => applyAppearance(payload));
+  ipcRenderer.on(CHANNELS.CONFIG, (_event, payload) => reportHotkeyConfig(payload));
+  ipcRenderer.on(CHANNELS.APPEARANCE, (_event, payload) => reportAppearance(payload));
   ipcRenderer.on(CHANNELS.FOCUS, (_event, payload) => {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
     const focused = focusPrompt();
@@ -541,6 +627,7 @@ const TEST_API = {
   CHANNELS,
   PROTOCOL_VERSION,
   applyAppearance,
+  applyAppearanceDetailed,
   applyHotkeyConfig,
   clearBridge,
   descriptorMatchesEvent,
@@ -556,6 +643,8 @@ const TEST_API = {
   normalizeClipboardPayload,
   normalizeKey,
   readConversationState,
+  reportAppearance,
+  reportHotkeyConfig,
   requestClipboardFallback,
   startBridgeRequest,
   utf8ByteLength,

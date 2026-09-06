@@ -15,6 +15,7 @@ class FakeElement {
     this.tagName = tag.toUpperCase();
     this.attributes = new Map(); this.attributeOrder = []; this.children = []; this.listeners = new Map();
     this.classes = new Set(); this.parentElement = null; this.isConnected = false; this.sent = []; this.actions = [];
+    this.style = {};
     this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), contains: (x) => this.classes.has(x) };
   }
   setAttribute(k, v) { this.attributes.set(k, String(v)); this.attributeOrder.push(k); }
@@ -45,7 +46,7 @@ class FakeItemView {
 
 class FakePlugin {
   constructor(app) {
-    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.1", dir: __dirname };
+    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.2", dir: __dirname };
     this.registeredViews = new Map(); this.commands = []; this.ribbons = []; this.intervals = []; this.events = [];
   }
   registerView(type, factory) { this.registeredViews.set(type, factory); }
@@ -67,7 +68,7 @@ const timers = new Map();
 global.window = {
   setInterval(fn) { const id = ++timerSerial; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); },
   setTimeout(fn) { const id = ++timerSerial; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
-  getComputedStyle() { return { color: "rgb(238, 238, 238)", getPropertyValue(name) { return name === "--interactive-accent" ? "rgb(10, 20, 30)" : name === "--text-normal" ? "rgb(238, 238, 238)" : ""; } }; }
+  getComputedStyle(target) { return { color: target?.style?.color || "rgb(238, 238, 238)", getPropertyValue(name) { return name === "--interactive-accent" ? "rgb(10, 20, 30)" : name === "--text-normal" ? "rgb(238, 238, 238)" : ""; } }; }
 };
 global.document = { createElement: (tag) => new FakeElement(tag), body: new FakeElement("body"), documentElement: new FakeElement("html") };
 Object.defineProperty(global, "navigator", {
@@ -126,8 +127,8 @@ function permissionRequest(overrides = {}) {
     options: [{ optionId: "opaque-once", name: "Allow once" }, { optionId: "opaque-session", name: "Allow for this session" }, { optionId: "opaque-always", name: "Allow always" }, { optionId: "opaque-reject", name: "Reject" }], ...overrides };
 }
 
-test("A manifest/view: 2.2.1 desktop identity", () => {
-  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.1", true]);
+test("A manifest/view: 2.2.2 desktop identity", () => {
+  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.2", true]);
 });
 
 test("A manifest/view: registers ItemView, useful commands, and ribbon", async () => {
@@ -202,6 +203,56 @@ test("B production preload integration: sandbox source without CommonJS sends RE
   assert.equal(item.view.preloadConnected, false);
   plugin.handleGuestMessage(item.view, { channel: readyMessage.channel, args: [readyMessage.payload] });
   assert.equal(item.view.preloadConnected, true); assert.equal(item.view.preloadStatus, "ready");
+  await item.view.onClose(); plugin.onunload();
+});
+
+test("B/C live regression: real CONFIG/APPEARANCE/keydown cross preload-host boundary with ACK diagnostics", async () => {
+  const source = fs.readFileSync(path.join(__dirname, "preload.js"), "utf8");
+  const guestMessages = []; const hostListeners = new Map(); const windowListeners = new Map(); const guestStyles = new Map();
+  const documentElement = {};
+  const cssValue = (name) => {
+    const text = guestStyles.get("gpt-obsidian-native-appearance")?.textContent || "";
+    return new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s*:\\s*([^;]+)`, "u").exec(text)?.[1]?.replace(/!important/gu, "").trim() || "";
+  };
+  const sandbox = {
+    console, TextEncoder, URL, DOMException, CSS: { supports: (property, value) => property === "color" && !/[;{}]/u.test(value) },
+    location: { hostname: "chatgpt.com" }, navigator: { clipboard: { async writeText() {} } },
+    window: { addEventListener(name, callback) { windowListeners.set(name, callback); }, setTimeout, clearTimeout, setInterval, clearInterval,
+      getComputedStyle(target) { return { display: "block", visibility: "visible", getPropertyValue: (name) => target === documentElement ? cssValue(name) : "" }; } },
+    document: { readyState: "loading", hasFocus: () => true, querySelectorAll: () => [], getElementById: (id) => guestStyles.get(id) || null,
+      createElement: () => ({}), head: { appendChild(node) { guestStyles.set(node.id, node); } }, documentElement },
+    require(id) {
+      if (id !== "electron") throw new Error(`sandbox preload cannot require ${id}`);
+      return { ipcRenderer: { sendToHost(channel, payload) { guestMessages.push({ channel, payload }); }, on(channel, callback) { hostListeners.set(channel, callback); } },
+        contextBridge: { exposeInMainWorld() {}, executeInMainWorld() { return false; } } };
+    }
+  };
+  vm.runInNewContext(source, sandbox, { filename: "live-preload.js" });
+  const plugin = await makePlugin(); const item = await openView(plugin); plugin.app.workspace.active = item.view;
+  const readyMessage = guestMessages.find((message) => message.channel === t.CHANNELS.READY);
+  plugin.handleGuestMessage(item.view, { channel: readyMessage.channel, args: [readyMessage.payload] });
+  for (const channel of [t.CHANNELS.CONFIG, t.CHANNELS.APPEARANCE]) {
+    const outbound = item.webview.sent.filter((message) => message.channel === channel).at(-1);
+    hostListeners.get(channel)?.(null, outbound.payload);
+  }
+  for (const message of guestMessages.filter((entry) => entry.channel === t.CHANNELS.DIAGNOSTIC)) {
+    plugin.handleGuestMessage(item.view, { channel: message.channel, args: [message.payload] });
+  }
+  const input = { isTrusted: true, code: "BracketRight", key: "ъ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true,
+    repeat: false, isComposing: false, preventDefault() { this.prevented = (this.prevented || 0) + 1; }, stopPropagation() {} };
+  const beforeKey = guestMessages.length; windowListeners.get("keydown")(input);
+  for (const message of guestMessages.slice(beforeKey)) plugin.handleGuestMessage(item.view, { channel: message.channel, args: [message.payload] });
+  const snapshot = plugin.diagnostics().views[0];
+  assert.equal(snapshot.keyboard.preloadAcceptedDescriptors, plugin.hotkeyPayload.length);
+  assert.deepEqual({ code: snapshot.keyboard.lastKeydown.code, key: snapshot.keyboard.lastKeydown.key,
+    matched: snapshot.keyboard.lastKeydown.matched, sent: snapshot.keyboard.lastKeydown.keyboardIpcSent },
+  { code: "BracketRight", key: "ъ", matched: true, sent: true });
+  assert.equal(snapshot.keyboard.hostLastIpc.reason, "executed"); assert.equal(snapshot.keyboard.hostLastIpc.viewFocused, false);
+  assert.deepEqual(plugin.app.calls, ["workspace:next-tab"]); assert.equal(input.prevented, 1);
+  assert.equal(snapshot.appearance.preloadReceived, true); assert.equal(snapshot.appearance.applied, true);
+  assert.equal(snapshot.appearance.styleExists, true); assert.deepEqual(snapshot.appearance.cssVars, snapshot.appearance.palette);
+  assert.match(guestStyles.get("gpt-obsidian-native-appearance").textContent, /--text-quaternary:/u);
+  assert.match(guestStyles.get("gpt-obsidian-native-appearance").textContent, /send-button[^}]+svg/isu);
   await item.view.onClose(); plugin.onunload();
 });
 
@@ -315,17 +366,26 @@ test("C keyboard: ordinary Enter, arrows, and text bindings never enter the glob
   assert.deepEqual(t.buildHotkeyAllowlist(app, 1).map((x) => x.commandId), ["escape"]);
 });
 
-test("C keyboard: one focused-view IPC event dispatches exactly once", async () => {
-  const plugin = await makePlugin(); const { view } = await openView(plugin); ready(view); view.focused = true; plugin.app.workspace.active = view;
-  const token = plugin.hotkeyPayload[0].token; plugin.handleGuestMessage(view, { channel: t.CHANNELS.KEYBOARD, args: [{ version: 1, token }] });
-  assert.deepEqual(plugin.app.calls, ["workspace:next-tab"]); await view.onClose(); plugin.onunload();
+test("C keyboard live regression: guest-focused IPC works when host webview focus event was absent", async () => {
+  const plugin = await makePlugin(); const { view } = await openView(plugin); ready(view); plugin.app.workspace.active = view;
+  assert.equal(view.focused, false); assert.equal(view.keyboardConnected, false);
+  const token = plugin.hotkeyPayload[0].token;
+  plugin.handleGuestMessage(view, { channel: t.CHANNELS.KEYBOARD, args: [{ version: 1, token, guestFocused: true }] });
+  assert.deepEqual(plugin.app.calls, ["workspace:next-tab"]); assert.equal(view.keyboardConnected, true);
+  assert.deepEqual({ reason: view.keyboardTrace.hostLastIpc.reason, viewFocused: view.keyboardTrace.hostLastIpc.viewFocused,
+    guestFocused: view.keyboardTrace.hostLastIpc.guestFocused, activeViewIsView: view.keyboardTrace.hostLastIpc.activeViewIsView,
+    commandId: view.keyboardTrace.hostLastIpc.commandId, executeResult: view.keyboardTrace.hostLastIpc.executeResult },
+  { reason: "executed", viewFocused: false, guestFocused: true, activeViewIsView: true,
+    commandId: "workspace:next-tab", executeResult: true });
+  await view.onClose(); plugin.onunload();
 });
 
 test("C keyboard: two views never double-dispatch and closed view cannot dispatch", async () => {
   const plugin = await makePlugin(); const a = await openView(plugin); const b = await openView(plugin); ready(a.view); ready(b.view);
   const token = plugin.hotkeyPayload[0].token; a.view.focused = true; b.view.focused = true; plugin.app.workspace.active = b.view;
-  plugin.handleKeyboardMessage(a.view, { version: 1, token }); plugin.handleKeyboardMessage(b.view, { version: 1, token });
-  assert.equal(plugin.app.calls.length, 1); await b.view.onClose(); plugin.handleKeyboardMessage(b.view, { version: 1, token });
+  plugin.handleKeyboardMessage(a.view, { version: 1, token, guestFocused: true }); plugin.handleKeyboardMessage(b.view, { version: 1, token, guestFocused: true });
+  assert.equal(a.view.keyboardTrace.hostLastIpc.reason, "different-active-gpt-view");
+  assert.equal(plugin.app.calls.length, 1); await b.view.onClose(); plugin.handleKeyboardMessage(b.view, { version: 1, token, guestFocused: true });
   assert.equal(plugin.app.calls.length, 1); await a.view.onClose(); plugin.onunload();
 });
 
