@@ -7,6 +7,8 @@
 }
 
 .gpt-obsidian-native-view {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -15,23 +17,76 @@
 
 .gpt-obsidian-native-view > webview[data-gpt-obsidian-owned="true"] {
   display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
   border: 0;
   background: #000;
 }
 
-.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state] {
+.gpt-obsidian-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.gpt-obsidian-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.gpt-obsidian-toolbar-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.gpt-obsidian-toolbar-icon,
+.gpt-obsidian-toolbar-icon > svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.gpt-obsidian-bridge-button {
+  margin-left: auto;
+  padding-inline: 8px;
+}
+
+.gpt-obsidian-bridge-label {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui-smaller);
+}
+
+.gpt-obsidian-toolbar-button[data-bridge-state] {
   border-radius: var(--radius-s);
   transition: color 120ms ease, background-color 120ms ease;
 }
 
-.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state="connected"] {
+.gpt-obsidian-toolbar-button[data-bridge-state="connected"] {
   color: var(--color-green);
   background: color-mix(in srgb, var(--color-green) 14%, transparent);
 }
 
-.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action:is(
+.gpt-obsidian-toolbar-button:is(
   [data-bridge-state="connecting"],
   [data-bridge-state="reconnecting"],
   [data-bridge-state="waiting-agent"],
@@ -40,13 +95,13 @@
   color: var(--color-yellow);
 }
 
-.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action:is(
+.gpt-obsidian-toolbar-button:is(
   [data-bridge-state="copilot-unavailable"],
   [data-bridge-state="error"]
 ) {
   color: var(--color-red);
 }
 
-.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state="standby"] {
+.gpt-obsidian-toolbar-button[data-bridge-state="standby"] {
   color: var(--text-muted);
 }

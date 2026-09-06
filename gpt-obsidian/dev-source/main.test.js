@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const os = require("node:os");
+const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
 const Module = require("node:module");
 
@@ -44,7 +45,7 @@ class FakeItemView {
 
 class FakePlugin {
   constructor(app) {
-    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.0", dir: __dirname };
+    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.1", dir: __dirname };
     this.registeredViews = new Map(); this.commands = []; this.ribbons = []; this.intervals = []; this.events = [];
   }
   registerView(type, factory) { this.registeredViews.set(type, factory); }
@@ -125,8 +126,8 @@ function permissionRequest(overrides = {}) {
     options: [{ optionId: "opaque-once", name: "Allow once" }, { optionId: "opaque-session", name: "Allow for this session" }, { optionId: "opaque-always", name: "Allow always" }, { optionId: "opaque-reject", name: "Reject" }], ...overrides };
 }
 
-test("A manifest/view: 2.2.0 desktop identity", () => {
-  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.0", true]);
+test("A manifest/view: 2.2.1 desktop identity", () => {
+  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.1", true]);
 });
 
 test("A manifest/view: registers ItemView, useful commands, and ribbon", async () => {
@@ -151,7 +152,8 @@ test("A manifest/view: two views are isolated", async () => {
 
 test("B webview: owned persistent secure preload precedes navigation", async () => {
   const plugin = await makePlugin(); const { view, webview, host } = await openView(plugin);
-  assert.equal(host.children.length, 1); assert.equal(webview.getAttribute(t.OWNER_ATTRIBUTE), "true");
+  assert.equal(host.children.length, 2); assert.equal(host.children[0], view.toolbarEl); assert.equal(host.children[1], webview);
+  assert.equal(webview.getAttribute(t.OWNER_ATTRIBUTE), "true");
   assert.equal(webview.getAttribute("partition"), t.CHATGPT_PARTITION); assert.match(webview.getAttribute("preload"), /^file:/u);
   assert.equal(webview.getAttribute("webpreferences"), t.SECURE_WEB_PREFERENCES);
   assert.ok(webview.attributeOrder.indexOf("preload") < webview.attributeOrder.indexOf("src"));
@@ -159,9 +161,59 @@ test("B webview: owned persistent secure preload precedes navigation", async () 
   await view.onClose(); plugin.onunload();
 });
 
+test("B toolbar: five view-local controls remain inside content when Obsidian header is hidden", async () => {
+  const plugin = await makePlugin(); const item = await openView(plugin);
+  assert.equal(item.view.toolbarEl.parentElement, item.host); assert.equal(item.view.toolbarEl.children.length, 5);
+  item.webview.backAvailable = item.webview.forwardAvailable = true;
+  item.view.backAction.emit("click"); item.view.forwardAction.emit("click"); item.view.reloadAction.emit("click"); item.view.focusAction.emit("click");
+  assert.deepEqual([item.webview.backCalls, item.webview.forwardCalls, item.webview.reloadCalls], [1, 1, 1]);
+  assert.equal(item.webview.sent.at(-1).channel, t.CHANNELS.FOCUS);
+  await item.view.onClose(); assert.equal(item.view.toolbarEl, null); plugin.onunload();
+});
+
 test("B webview: embedded preload integrity matches the plugin-owned file", () => {
   const digest = crypto.createHash("sha256").update(fs.readFileSync(path.join(__dirname, "preload.js"))).digest("hex");
   assert.equal(digest, t.PRELOAD_SHA256);
+});
+
+test("B production preload integration: sandbox source without CommonJS sends READY and connects host view", async () => {
+  const source = fs.readFileSync(path.join(__dirname, "preload.js"), "utf8");
+  const guestMessages = []; const hostListeners = new Map(); const windowListeners = new Map();
+  const sandbox = {
+    console, TextEncoder, URL, DOMException,
+    location: { hostname: "chatgpt.com" }, navigator: { clipboard: { async writeText() {} } },
+    window: { addEventListener(name, callback) { windowListeners.set(name, callback); }, setTimeout, clearTimeout, setInterval, clearInterval,
+      getComputedStyle: () => ({ display: "block", visibility: "visible" }) },
+    document: { readyState: "loading", querySelectorAll: () => [], getElementById: () => null, createElement: () => ({}),
+      head: { appendChild() {} }, documentElement: { appendChild() {} } },
+    require(id) {
+      if (id !== "electron") throw new Error(`sandbox preload cannot require ${id}`);
+      return {
+        ipcRenderer: { sendToHost(channel, payload) { guestMessages.push({ channel, payload }); }, on(channel, callback) { hostListeners.set(channel, callback); } },
+        contextBridge: { exposeInMainWorld() {}, executeInMainWorld() { return false; } }
+      };
+    }
+  };
+  vm.runInNewContext(source, sandbox, { filename: "production-preload.js" });
+  const readyMessage = guestMessages.find((message) => message.channel === t.CHANNELS.READY);
+  assert.equal(readyMessage?.payload?.version, 1); assert.equal(readyMessage?.payload?.ok, true);
+  assert.equal(windowListeners.has("keydown"), true); assert.equal(hostListeners.has(t.CHANNELS.CONFIG), true);
+  const plugin = await makePlugin(); const item = await openView(plugin);
+  assert.equal(item.view.preloadConnected, false);
+  plugin.handleGuestMessage(item.view, { channel: readyMessage.channel, args: [readyMessage.payload] });
+  assert.equal(item.view.preloadConnected, true); assert.equal(item.view.preloadStatus, "ready");
+  await item.view.onClose(); plugin.onunload();
+});
+
+test("B production preload diagnostics: missing READY is observable and late READY heals state", async () => {
+  const plugin = await makePlugin(); const item = await openView(plugin); const originalError = console.error; console.error = () => {};
+  try {
+    item.webview.emit("dom-ready"); const timer = item.view.preloadTimer; assert.notEqual(timer, null); timers.get(timer)();
+    assert.equal(item.view.preloadConnected, false); assert.equal(item.view.preloadStatus, "timeout");
+    const snapshot = plugin.diagnostics().views[0];
+    assert.equal(snapshot.preloadAttribute, plugin.preloadUrl); assert.equal(snapshot.preloadStatus, "timeout");
+    ready(item.view); assert.equal(item.view.preloadConnected, true); assert.equal(item.view.preloadStatus, "ready"); assert.equal(item.view.preloadError, null);
+  } finally { console.error = originalError; await item.view.onClose(); plugin.onunload(); }
 });
 
 test("B webview: missing or damaged runtime preload is atomically self-provisioned", () => {
@@ -325,9 +377,9 @@ test("D permission UI: compact current-view action represents every bridge state
     item.view.bridge.state = state; plugin.updateBridgeStatus(item.view);
     assert.equal(item.view.bridgeAction.getAttribute("data-bridge-state"), state);
     assert.match(item.view.bridgeAction.getAttribute("aria-label"), /^GPT ↔ Copilot /u);
-    assert.ok(item.view.bridgeAction.icon);
+    assert.ok(item.view.bridgeIcon.icon); assert.ok(item.view.bridgeLabel.textContent);
   }
-  item.view.bridge.enabled = false; await item.view.bridgeAction.callback(); assert.equal(item.view.bridge.enabled, true);
+  item.view.bridge.enabled = false; item.view.bridgeAction.emit("click"); assert.equal(item.view.bridge.enabled, true);
   await item.view.onClose(); plugin.onunload();
 });
 

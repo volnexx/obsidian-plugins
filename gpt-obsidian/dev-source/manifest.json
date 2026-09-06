@@ -1,7 +1,7 @@
 {
   "id": "gpt-obsidian",
   "name": "GPT Obsidian",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "minAppVersion": "1.8.0",
   "description": "Native, isolated ChatGPT tabs with Obsidian hotkeys and an optional Copilot permission bridge.",
   "author": "volnexx",

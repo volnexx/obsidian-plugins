@@ -84,11 +84,11 @@
     {
       "id": "gpt-obsidian",
       "name": "GPT Obsidian",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "path": "gpt-obsidian",
       "sourcePath": "gpt-obsidian/dev-source",
-      "sourceHash": "47dff26de14f96dce346f42da31a5255c118654efc2ba21186776dc2bc6b512d",
-      "runtimeHash": "88dc9b4e3bcfd26441e4098711105f3b18328e9d44adf91c5bc1bcee834ecb81",
+      "sourceHash": "26b3a210a9ab7d8800d8c1b68d307bc8b5c73f8dde01c68489007940a83f928c",
+      "runtimeHash": "df0bf2510b43d6af69a431e256659d53da83efc7aafd1f5fcf43a67d48e4d7e2",
       "runtimeFiles": [
         "main.js",
         "manifest.json",

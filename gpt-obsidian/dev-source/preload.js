@@ -522,15 +522,20 @@ function install() {
   ipcRenderer.on(CHANNELS.BRIDGE_REQUEST, (_event, payload) => void startBridgeRequest(payload));
   ipcRenderer.on(CHANNELS.BRIDGE_CANCEL, (_event, payload) => clearBridge(payload?.requestId || null));
   ipcRenderer.on(CHANNELS.CLIPBOARD_RESULT, (_event, payload) => handleClipboardResult(payload));
-  const ready = () => send(CHANNELS.READY, { version: PROTOCOL_VERSION });
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true });
-  else ready();
+  send(CHANNELS.READY, { version: PROTOCOL_VERSION, ok: true });
   return true;
 }
 
-if (typeof window !== "undefined" && typeof document !== "undefined") install();
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  try { install(); }
+  catch (error) {
+    const message = String(error?.message || error || "preload startup failed").slice(0, 300);
+    try { console.error("[GPT Obsidian preload] startup failed", error); } catch (_) {}
+    send(CHANNELS.READY, { version: PROTOCOL_VERSION, ok: false, error: message });
+  }
+}
 
-module.exports = {
+const TEST_API = {
   CLIPBOARD_API_KEY,
   CLIPBOARD_MAX_BYTES,
   CHANNELS,
@@ -556,3 +561,6 @@ module.exports = {
   utf8ByteLength,
   validDescriptor
 };
+
+// Electron sandboxed preload scripts do not expose CommonJS globals. Node tests do.
+if (typeof module !== "undefined" && module?.exports) module.exports = TEST_API;
