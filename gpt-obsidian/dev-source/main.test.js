@@ -7,15 +7,18 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const os = require("node:os");
 const vm = require("node:vm");
+const { EventEmitter } = require("node:events");
 const { spawnSync } = require("node:child_process");
 const Module = require("node:module");
 
+let webContentsSerial = 0;
 class FakeElement {
   constructor(tag = "div") {
     this.tagName = tag.toUpperCase();
     this.attributes = new Map(); this.attributeOrder = []; this.children = []; this.listeners = new Map();
     this.classes = new Set(); this.parentElement = null; this.isConnected = false; this.sent = []; this.actions = [];
     this.style = {};
+    if (tag === "webview") this.webContentsId = ++webContentsSerial;
     this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), contains: (x) => this.classes.has(x) };
   }
   setAttribute(k, v) { this.attributes.set(k, String(v)); this.attributeOrder.push(k); }
@@ -36,6 +39,7 @@ class FakeElement {
   goBack() { this.backCalls = (this.backCalls || 0) + 1; } goForward() { this.forwardCalls = (this.forwardCalls || 0) + 1; }
   reload() { this.reloadCalls = (this.reloadCalls || 0) + 1; }
   focus() { this.focusCalls = (this.focusCalls || 0) + 1; this.emit("focus"); }
+  getWebContentsId() { return this.webContentsId || 0; }
 }
 
 class FakeItemView {
@@ -46,7 +50,7 @@ class FakeItemView {
 
 class FakePlugin {
   constructor(app) {
-    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.2", dir: __dirname };
+    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.3", dir: __dirname };
     this.registeredViews = new Map(); this.commands = []; this.ribbons = []; this.intervals = []; this.events = [];
   }
   registerView(type, factory) { this.registeredViews.set(type, factory); }
@@ -56,10 +60,15 @@ class FakePlugin {
   registerEvent(ref) { this.events.push(ref); }
 }
 
+const remoteState = { host: null, guests: new Map() };
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === "obsidian") return { ItemView: FakeItemView, Notice: class Notice {}, Plugin: FakePlugin, setIcon(el, icon) { el.icon = icon; } };
   if (request === "electron") return { shell: { openExternal() {} } };
+  if (request === "@electron/remote") return {
+    getCurrentWebContents() { return remoteState.host; },
+    webContents: { fromId(id) { return remoteState.guests.get(id) || null; } }
+  };
   return originalLoad.call(this, request, parent, isMain);
 };
 
@@ -103,6 +112,7 @@ function makeApp(manager = null) {
   const calls = [];
   app = {
     workspace,
+    hostWebContents: new EventEmitter(), guestWebContents: new Map(),
     commands: { commands: { "workspace:next-tab": {}, "workspace:previous-tab": {} }, executeCommandById(id) { calls.push(id); return true; } },
     hotkeyManager: { defaultKeys: {
       "workspace:next-tab": [{ modifiers: ["Mod", "Shift"], key: "]" }],
@@ -113,7 +123,11 @@ function makeApp(manager = null) {
   return app;
 }
 
-async function makePlugin(app = makeApp()) { const plugin = new Plugin(app); await plugin.onload(); return plugin; }
+async function makePlugin(app = makeApp()) {
+  remoteState.host = app.hostWebContents;
+  remoteState.guests = app.guestWebContents;
+  const plugin = new Plugin(app); await plugin.onload(); return plugin;
+}
 async function openView(plugin, url = null) {
   const leaf = { app: plugin.app, contentEl: new FakeElement(), headerUpdates: 0, updateHeader() { this.headerUpdates += 1; } };
   const view = new GPTObsidianView(leaf, plugin);
@@ -127,8 +141,8 @@ function permissionRequest(overrides = {}) {
     options: [{ optionId: "opaque-once", name: "Allow once" }, { optionId: "opaque-session", name: "Allow for this session" }, { optionId: "opaque-always", name: "Allow always" }, { optionId: "opaque-reject", name: "Reject" }], ...overrides };
 }
 
-test("A manifest/view: 2.2.2 desktop identity", () => {
-  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.2", true]);
+test("A manifest/view: 2.2.3 desktop identity", () => {
+  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.3", true]);
 });
 
 test("A manifest/view: registers ItemView, useful commands, and ribbon", async () => {
@@ -160,6 +174,72 @@ test("B webview: owned persistent secure preload precedes navigation", async () 
   assert.ok(webview.attributeOrder.indexOf("preload") < webview.attributeOrder.indexOf("src"));
   for (const unsafe of ["nodeintegration", "allowpopups", "disablewebsecurity"]) assert.equal(webview.hasAttribute(unsafe), false);
   await view.onClose(); plugin.onunload();
+});
+
+test("B attachment: Obsidian preload stripping is repaired only for the registered owned view and verified effectively", async () => {
+  const app = makeApp();
+  let coreCalls = 0;
+  const obsidianSecurityHandler = (_event, preferences) => {
+    coreCalls += 1;
+    delete preferences.preload;
+    delete preferences.preloadURL;
+    preferences.sandbox = true;
+    preferences.contextIsolation = true;
+    preferences.nodeIntegration = false;
+    preferences.webSecurity = true;
+  };
+  app.hostWebContents.on("will-attach-webview", obsidianSecurityHandler);
+  const plugin = await makePlugin(app);
+  const lateForeign = () => {};
+  app.hostWebContents.on("will-attach-webview", lateForeign);
+  const item = await openView(plugin);
+  assert.deepEqual(app.hostWebContents.listeners("will-attach-webview"), [obsidianSecurityHandler, lateForeign, plugin.willAttachHandler]);
+
+  const preferences = { preload: plugin.preloadPath };
+  const params = {
+    partition: t.CHATGPT_PARTITION,
+    src: item.webview.getAttribute("src"), preload: item.webview.getAttribute("preload")
+  };
+  let prevented = 0;
+  app.hostWebContents.emit("will-attach-webview", { preventDefault() { prevented += 1; } }, preferences, params);
+  assert.equal(coreCalls, 1);
+  assert.equal(preferences.preload, plugin.preloadPath);
+  assert.deepEqual({ sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation,
+    nodeIntegration: preferences.nodeIntegration, webSecurity: preferences.webSecurity },
+  { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true });
+  assert.equal(prevented, 0);
+  assert.equal(item.view.attachmentTrace.preloadBeforeHandler, null);
+  assert.equal(item.view.attachmentTrace.preloadAfterHandler, plugin.preloadPath);
+
+  app.guestWebContents.set(item.webview.getWebContentsId(), { getLastWebPreferences() { return { ...preferences }; } });
+  item.webview.emit("dom-ready");
+  const attachment = plugin.diagnostics().views[0].attachment;
+  assert.equal(attachment.willAttachObserved, true);
+  assert.equal(attachment.effectivePreload, plugin.preloadPath);
+  assert.equal(attachment.attachmentReason, "effective-preload-verified");
+  assert.equal(attachment.attachmentRejected, false);
+  assert.deepEqual(attachment.effectiveSecurity, { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true });
+
+  const foreignPreferences = { preload: plugin.preloadPath };
+  app.hostWebContents.emit("will-attach-webview", {}, foreignPreferences, params);
+  assert.equal(foreignPreferences.preload, undefined);
+  await item.view.onClose();
+  plugin.onunload();
+  assert.deepEqual(app.hostWebContents.listeners("will-attach-webview"), [obsidianSecurityHandler, lateForeign]);
+});
+
+test("B attachment: registered owner with wrong partition or origin is rejected without restoring preload", async () => {
+  const app = makeApp();
+  app.hostWebContents.on("will-attach-webview", (_event, preferences) => { delete preferences.preload; });
+  const plugin = await makePlugin(app); const item = await openView(plugin);
+  const base = { name: item.webview.getAttribute("name"), src: t.DEFAULT_CHATGPT_URL, partition: t.CHATGPT_PARTITION, preload: plugin.preloadUrl };
+  for (const [change, reason] of [[{ partition: "persist:foreign" }, "partition-mismatch"], [{ src: "https://example.com/" }, "untrusted-src"]]) {
+    const preferences = { preload: plugin.preloadPath }; let prevented = 0;
+    app.hostWebContents.emit("will-attach-webview", { preventDefault() { prevented += 1; } }, preferences, { ...base, ...change });
+    assert.equal(preferences.preload, undefined); assert.equal(prevented, 1); assert.equal(item.view.attachmentTrace.attachmentReason, reason);
+    assert.equal(item.view.attachmentTrace.attachmentRejected, true);
+  }
+  await item.view.onClose(); plugin.onunload();
 });
 
 test("B toolbar: five view-local controls remain inside content when Obsidian header is hidden", async () => {
