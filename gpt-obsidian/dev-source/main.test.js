@@ -33,6 +33,7 @@ class FakeElement {
   canGoBack() { return this.backAvailable === true; } canGoForward() { return this.forwardAvailable === true; }
   goBack() { this.backCalls = (this.backCalls || 0) + 1; } goForward() { this.forwardCalls = (this.forwardCalls || 0) + 1; }
   reload() { this.reloadCalls = (this.reloadCalls || 0) + 1; }
+  focus() { this.focusCalls = (this.focusCalls || 0) + 1; this.emit("focus"); }
 }
 
 class FakeItemView {
@@ -43,18 +44,19 @@ class FakeItemView {
 
 class FakePlugin {
   constructor(app) {
-    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.1.0", dir: __dirname };
-    this.registeredViews = new Map(); this.commands = []; this.ribbons = []; this.intervals = [];
+    this.app = app; this.manifest = { id: "gpt-obsidian", version: "2.2.0", dir: __dirname };
+    this.registeredViews = new Map(); this.commands = []; this.ribbons = []; this.intervals = []; this.events = [];
   }
   registerView(type, factory) { this.registeredViews.set(type, factory); }
   addCommand(command) { this.commands.push(command); }
   addRibbonIcon(icon, title, callback) { this.ribbons.push({ icon, title, callback }); }
   registerInterval(id) { this.intervals.push(id); }
+  registerEvent(ref) { this.events.push(ref); }
 }
 
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
-  if (request === "obsidian") return { ItemView: FakeItemView, Notice: class Notice {}, Plugin: FakePlugin };
+  if (request === "obsidian") return { ItemView: FakeItemView, Notice: class Notice {}, Plugin: FakePlugin, setIcon(el, icon) { el.icon = icon; } };
   if (request === "electron") return { shell: { openExternal() {} } };
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -63,9 +65,10 @@ let timerSerial = 0;
 const timers = new Map();
 global.window = {
   setInterval(fn) { const id = ++timerSerial; timers.set(id, fn); return id; }, clearInterval(id) { timers.delete(id); },
-  setTimeout(fn) { const id = ++timerSerial; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); }
+  setTimeout(fn) { const id = ++timerSerial; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
+  getComputedStyle() { return { color: "rgb(238, 238, 238)", getPropertyValue(name) { return name === "--interactive-accent" ? "rgb(10, 20, 30)" : name === "--text-normal" ? "rgb(238, 238, 238)" : ""; } }; }
 };
-global.document = { createElement: (tag) => new FakeElement(tag) };
+global.document = { createElement: (tag) => new FakeElement(tag), body: new FakeElement("body"), documentElement: new FakeElement("html") };
 Object.defineProperty(global, "navigator", {
   configurable: true,
   value: { clipboard: { async writeText(text) { global.__copied = text; } } }
@@ -88,10 +91,12 @@ function makeManager(backendId = "backend-1") {
 function makeApp(manager = null) {
   let app;
   const workspace = {
-    leaves: [], revealed: [], detached: [], saves: 0, active: null,
+    leaves: [], revealed: [], detached: [], saves: 0, active: null, events: new Map(),
     getLeaf(mode) { const leaf = { app, mode, async setViewState(state) { this.state = state; } }; this.leaves.push(leaf); return leaf; },
     async revealLeaf(leaf) { this.revealed.push(leaf); }, detachLeavesOfType(type) { this.detached.push(type); },
-    requestSaveLayout() { this.saves += 1; }, getActiveViewOfType() { return this.active; }
+    requestSaveLayout() { this.saves += 1; }, getActiveViewOfType() { return this.active; },
+    on(name, callback) { const ref = { name, callback }; if (!this.events.has(name)) this.events.set(name, new Set()); this.events.get(name).add(ref); return ref; },
+    offref(ref) { this.events.get(ref?.name)?.delete(ref); }, emit(name, value) { for (const ref of this.events.get(name) || []) ref.callback(value); }
   };
   const calls = [];
   app = {
@@ -120,8 +125,8 @@ function permissionRequest(overrides = {}) {
     options: [{ optionId: "opaque-once", name: "Allow once" }, { optionId: "opaque-session", name: "Allow for this session" }, { optionId: "opaque-always", name: "Allow always" }, { optionId: "opaque-reject", name: "Reject" }], ...overrides };
 }
 
-test("A manifest/view: 2.1.0 desktop identity", () => {
-  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.1.0", true]);
+test("A manifest/view: 2.2.0 desktop identity", () => {
+  assert.deepEqual([manifest.id, manifest.name, manifest.version, manifest.isDesktopOnly], ["gpt-obsidian", "GPT Obsidian", "2.2.0", true]);
 });
 
 test("A manifest/view: registers ItemView, useful commands, and ribbon", async () => {
@@ -169,6 +174,25 @@ test("B webview: missing or damaged runtime preload is atomically self-provision
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 });
 
+test("B production startup: vault-relative manifest.dir resolves before preload provisioning", async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-obsidian-startup-"));
+  const runtimeDir = path.join(temporary, ".obsidian", "plugins", "gpt-obsidian");
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  const app = makeApp();
+  app.vault = { adapter: { getFullPath(vaultPath) { return path.join(temporary, vaultPath); } } };
+  const plugin = new Plugin(app);
+  plugin.manifest.dir = ".obsidian/plugins/gpt-obsidian";
+  try {
+    await plugin.onload();
+    assert.equal(plugin.preloadPath, path.join(runtimeDir, "preload.js"));
+    assert.equal(crypto.createHash("sha256").update(fs.readFileSync(plugin.preloadPath)).digest("hex"), t.PRELOAD_SHA256);
+    assert.equal(plugin.registeredViews.has(t.VIEW_TYPE), true);
+  } finally {
+    plugin.onunload();
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("B webview: URL state round-trip, title text, and restore", async () => {
   const plugin = await makePlugin(); const url = "https://chatgpt.com/c/example"; const { view, webview, leaf } = await openView(plugin, url);
   assert.equal(webview.getAttribute("src"), url); webview.emit("did-navigate-in-page", { url: `${url}-2` });
@@ -198,6 +222,28 @@ test("B focus: failed autofocus result schedules only the next bounded attempt",
   plugin.handleGuestMessage(view, { channel: t.CHANNELS.FOCUS_RESULT, args: [{ version: 1, requestId, focused: false }] });
   assert.notEqual(view.focusTimer, null); const timer = view.focusTimer; timers.get(timer)();
   assert.equal(view.focusRequest.autoAttempt, 1); await view.onClose(); plugin.onunload();
+});
+
+test("B focus: returning to an existing leaf focuses only that view prompt once", async () => {
+  const plugin = await makePlugin(); const a = await openView(plugin); const b = await openView(plugin);
+  ready(a.view); ready(b.view); a.webview.sent.length = 0; b.webview.sent.length = 0;
+  plugin.app.workspace.active = a.view; plugin.app.workspace.emit("active-leaf-change", a.leaf);
+  assert.equal(a.webview.focusCalls, 1); assert.equal(b.webview.focusCalls || 0, 0);
+  const timer = a.view.activationFocusTimer; assert.notEqual(timer, null); timers.get(timer)();
+  assert.equal(a.webview.sent.filter((message) => message.channel === t.CHANNELS.FOCUS).length, 1);
+  assert.equal(b.webview.sent.filter((message) => message.channel === t.CHANNELS.FOCUS).length, 0);
+  await a.view.onClose(); assert.equal(plugin.app.workspace.events.get("active-leaf-change").size, 1);
+  await b.view.onClose(); assert.equal(plugin.app.workspace.events.get("active-leaf-change").size, 0); plugin.onunload();
+});
+
+test("B appearance: donor palette is sent view-locally on ready and css-change", async () => {
+  const plugin = await makePlugin(); const { view, webview } = await openView(plugin); webview.sent.length = 0;
+  ready(view);
+  const appearance = webview.sent.find((message) => message.channel === t.CHANNELS.APPEARANCE);
+  assert.deepEqual(appearance.payload.palette, { textColor: "rgb(238, 238, 238)", negative: "rgb(245, 235, 225)", negativeHover: "rgb(246, 237, 229)" });
+  const before = webview.sent.length; plugin.app.workspace.emit("css-change");
+  assert.equal(webview.sent.length, before + 1); assert.equal(webview.sent.at(-1).channel, t.CHANNELS.APPEARANCE);
+  await view.onClose(); plugin.onunload();
 });
 
 test("C keyboard: allowlist uses defaults, custom overrides, modifiers, and opaque token", () => {
@@ -262,8 +308,43 @@ test("D permission: preferred focused view is sole owner and close transfers own
 test("D permission: delayed/replaced backend deterministically rebinds", async () => {
   const manager = makeManager(null); const plugin = await makePlugin(makeApp(manager)); const item = await openView(plugin); item.view.bridge.enabled = true; plugin.reconcileBridge();
   assert.equal(item.view.bridge.state, t.BRIDGE_STATES.WAITING_BACKEND); manager.session.getBackendSessionId = () => "backend-2"; plugin.reconcileBridge();
+  assert.equal(item.view.bridge.state, t.BRIDGE_STATES.CONNECTING); ready(item.view);
   assert.equal(item.view.bridge.state, t.BRIDGE_STATES.CONNECTED); assert.equal(item.view.bridge.sessionId, "backend-2");
   manager.session.getBackendSessionId = () => "backend-3"; plugin.reconcileBridge(); assert.equal(item.view.bridge.sessionId, "backend-3");
+  await item.view.onClose(); plugin.onunload();
+});
+
+test("D permission UI: compact current-view action represents every bridge state", async () => {
+  const manager = makeManager(); const plugin = await makePlugin(makeApp(manager)); const item = await openView(plugin);
+  const states = [
+    t.BRIDGE_STATES.OFF, t.BRIDGE_STATES.COPILOT_UNAVAILABLE, t.BRIDGE_STATES.WAITING_AGENT,
+    t.BRIDGE_STATES.WAITING_BACKEND, t.BRIDGE_STATES.STANDBY, t.BRIDGE_STATES.CONNECTING,
+    t.BRIDGE_STATES.CONNECTED, t.BRIDGE_STATES.RECONNECTING, t.BRIDGE_STATES.ERROR
+  ];
+  for (const state of states) {
+    item.view.bridge.state = state; plugin.updateBridgeStatus(item.view);
+    assert.equal(item.view.bridgeAction.getAttribute("data-bridge-state"), state);
+    assert.match(item.view.bridgeAction.getAttribute("aria-label"), /^GPT ↔ Copilot /u);
+    assert.ok(item.view.bridgeAction.icon);
+  }
+  item.view.bridge.enabled = false; await item.view.bridgeAction.callback(); assert.equal(item.view.bridge.enabled, true);
+  await item.view.onClose(); plugin.onunload();
+});
+
+test("B clipboard fallback: host accepts long Unicode markdown but rejects over 4 MiB", async () => {
+  const plugin = await makePlugin(); const item = await openView(plugin);
+  const payloads = [
+    "x".repeat(100), "x".repeat(10 * 1024), "x".repeat(100 * 1024),
+    "Русский текст 🌍\n".repeat(1000), "```js\nconst x = 1;\n```\n**markdown**"
+  ];
+  for (const [index, text] of payloads.entries()) {
+    assert.equal(await plugin.handleClipboardWrite(item.view, { version: 1, requestId: `copy-${index}`, text }), true);
+    assert.equal(global.__copied, text);
+    assert.deepEqual(item.webview.sent.at(-1).payload, { version: 1, requestId: `copy-${index}`, ok: true });
+  }
+  const previous = global.__copied;
+  assert.equal(await plugin.handleClipboardWrite(item.view, { version: 1, requestId: "too-large", text: "x".repeat(t.CLIPBOARD_MAX_BYTES + 1) }), false);
+  assert.equal(global.__copied, previous); assert.equal(item.webview.sent.at(-1).payload.ok, false);
   await item.view.onClose(); plugin.onunload();
 });
 

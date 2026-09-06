@@ -20,3 +20,33 @@
   border: 0;
   background: #000;
 }
+
+.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state] {
+  border-radius: var(--radius-s);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state="connected"] {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+}
+
+.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action:is(
+  [data-bridge-state="connecting"],
+  [data-bridge-state="reconnecting"],
+  [data-bridge-state="waiting-agent"],
+  [data-bridge-state="waiting-backend"]
+) {
+  color: var(--color-yellow);
+}
+
+.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action:is(
+  [data-bridge-state="copilot-unavailable"],
+  [data-bridge-state="error"]
+) {
+  color: var(--color-red);
+}
+
+.workspace-leaf-content[data-type="gpt-obsidian-view"] .view-action[data-bridge-state="standby"] {
+  color: var(--text-muted);
+}

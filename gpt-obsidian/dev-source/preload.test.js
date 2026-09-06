@@ -6,13 +6,18 @@ const Module = require("node:module");
 
 const sent = [];
 const hostListeners = new Map();
+const pageApis = new Map();
 const ipcRenderer = {
   sendToHost(channel, payload) { sent.push({ channel, payload }); },
   on(channel, callback) { hostListeners.set(channel, callback); }
 };
+const contextBridge = {
+  exposeInMainWorld(key, api) { pageApis.set(key, api); globalThis[key] = api; },
+  executeInMainWorld({ func, args }) { return func(...args); }
+};
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
-  if (request === "electron") return { ipcRenderer };
+  if (request === "electron") return { contextBridge, ipcRenderer };
   return originalLoad.call(this, request, parent, isMain);
 };
 
@@ -78,16 +83,68 @@ test("C preload keyboard: config validates and deduplicates opaque tokens", () =
   assert.equal(sent.length, 1);
 });
 
-test("B preload security: install is idempotent and exposes no page API", () => {
+test("B preload security: install is idempotent and exposes only a narrow write-only fallback", () => {
   const windowListeners = new Map();
   global.window = {
     addEventListener(name, fn) { if (!windowListeners.has(name)) windowListeners.set(name, []); windowListeners.get(name).push(fn); },
     setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {}, getComputedStyle: () => ({ display: "block", visibility: "visible" })
   };
-  global.document = { readyState: "complete", querySelectorAll: () => [] };
+  const head = { appendChild() {} };
+  global.document = { readyState: "complete", querySelectorAll: () => [], getElementById: () => null, createElement: () => ({}), head, documentElement: head };
+  global.location = { hostname: "chatgpt.com" };
+  Object.defineProperty(global, "navigator", { configurable: true, value: { clipboard: { async writeText() {} } } });
   assert.equal(preload.install(), true); assert.equal(preload.install(), false);
-  assert.equal(windowListeners.get("keydown").length, 1); assert.equal("gptObsidian" in global.window, false);
-  assert.deepEqual([...hostListeners.keys()].sort(), [preload.CHANNELS.BRIDGE_CANCEL, preload.CHANNELS.BRIDGE_REQUEST, preload.CHANNELS.CONFIG, preload.CHANNELS.FOCUS].sort());
+  assert.equal(windowListeners.get("keydown").length, 1); assert.equal(windowListeners.get("click").length, 1);
+  assert.deepEqual(Object.keys(pageApis.get(preload.CLIPBOARD_API_KEY)), ["fallbackWrite"]);
+  assert.deepEqual([...hostListeners.keys()].sort(), [preload.CHANNELS.APPEARANCE, preload.CHANNELS.BRIDGE_CANCEL, preload.CHANNELS.BRIDGE_REQUEST,
+    preload.CHANNELS.CLIPBOARD_RESULT, preload.CHANNELS.CONFIG, preload.CHANNELS.FOCUS].sort());
+});
+
+test("B appearance: validates palette and replaces one stable style element", () => {
+  const styles = new Map(); const head = { appendChild(node) { styles.set(node.id, node); } };
+  global.document = { head, documentElement: head, getElementById(id) { return styles.get(id) || null; }, createElement() { return {}; } };
+  const payload = { version: 1, palette: { textColor: "rgb(1, 2, 3)", negative: "#abcdef", negativeHover: "rgb(4, 5, 6)" } };
+  assert.equal(preload.applyAppearance(payload), true); const first = styles.get("gpt-obsidian-native-appearance");
+  assert.match(first.textContent, /--gpt-obsidian-negative: #abcdef/u);
+  assert.equal(preload.applyAppearance(payload), true); assert.equal(styles.get("gpt-obsidian-native-appearance"), first);
+  assert.equal(preload.applyAppearance({ version: 1, palette: { textColor: "red;display:none", negative: "#fff", negativeHover: "#fff" } }), false);
+});
+
+test("B clipboard: 100 B, 10 KiB, 100 KiB, Unicode, and markdown preserve exact text", () => {
+  for (const text of ["x".repeat(100), "x".repeat(10 * 1024), "x".repeat(100 * 1024), "Привет 🌍\n".repeat(1000), "```js\nconst x = 1;\n```\n**markdown**"]) {
+    assert.deepEqual(preload.normalizeClipboardPayload({ text }), { text });
+  }
+  assert.equal(preload.normalizeClipboardPayload({ text: "x".repeat(preload.CLIPBOARD_MAX_BYTES + 1) }), null);
+});
+
+test("B clipboard: native success stays native; exact focus loss alone uses fallback", async () => {
+  let nativeCalls = 0; let fallbackText = null;
+  const apiKey = "__clipboardTestApi";
+  globalThis[apiKey] = { async fallbackWrite({ text }) { fallbackText = text; return true; } };
+  Object.defineProperty(global, "navigator", { configurable: true, value: { clipboard: { async writeText() { nativeCalls += 1; } } } });
+  assert.equal(preload.installClipboardFallbackInPage(apiKey), true);
+  await global.navigator.clipboard.writeText("short"); assert.equal(nativeCalls, 1); assert.equal(fallbackText, null);
+  const long = `${"длинный 🌍 ".repeat(10000)}\n\n\`\`\`js\nconst ok = true;\n\`\`\``;
+  Object.defineProperty(global, "navigator", { configurable: true, value: { clipboard: { async writeText() { throw new DOMException("Document is not focused", "NotAllowedError"); } } } });
+  assert.equal(preload.installClipboardFallbackInPage(apiKey), true);
+  await global.navigator.clipboard.writeText(long); assert.equal(fallbackText, long);
+  fallbackText = null;
+  Object.defineProperty(global, "navigator", { configurable: true, value: { clipboard: { async writeText() { throw new DOMException("Permission denied", "NotAllowedError"); } } } });
+  preload.installClipboardFallbackInPage(apiKey);
+  await assert.rejects(global.navigator.clipboard.writeText("no"), /Permission denied/u); assert.equal(fallbackText, null);
+});
+
+test("B clipboard: host fallback requires a recent trusted Copy-button gesture", async () => {
+  sent.length = 0;
+  const button = { getAttribute(name) { return name === "aria-label" ? "Copy message" : null; }, innerText: "", textContent: "", closest() { return this; } };
+  assert.equal(preload.handleCopyClick({ isTrusted: false, target: button }), false);
+  assert.equal(await preload.requestClipboardFallback({ text: "blocked" }), false);
+  assert.equal(preload.handleCopyClick({ isTrusted: true, target: button }), true);
+  const promise = preload.requestClipboardFallback({ text: "Русский markdown `code`" });
+  const request = sent.find((message) => message.channel === preload.CHANNELS.CLIPBOARD_WRITE);
+  assert.equal(request.payload.text, "Русский markdown `code`");
+  hostListeners.get(preload.CHANNELS.CLIPBOARD_RESULT)(null, { version: 1, requestId: request.payload.requestId, ok: true });
+  assert.equal(await promise, true);
 });
 
 test("B preload security: invalid bridge request is ignored", async () => {

@@ -1,10 +1,15 @@
 "use strict";
 
-const { ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 const PROTOCOL_VERSION = 1;
+const CLIPBOARD_API_KEY = "__gptObsidianClipboard";
+const CLIPBOARD_MAX_BYTES = 4 * 1024 * 1024;
+const CLIPBOARD_GESTURE_WINDOW_MS = 15000;
+const CLIPBOARD_RESULT_TIMEOUT_MS = 10000;
 const CHANNELS = Object.freeze({
   CONFIG: "gpt-obsidian:host-config",
+  APPEARANCE: "gpt-obsidian:appearance",
   FOCUS: "gpt-obsidian:focus-prompt",
   BRIDGE_REQUEST: "gpt-obsidian:bridge-request",
   BRIDGE_CANCEL: "gpt-obsidian:bridge-cancel",
@@ -13,7 +18,9 @@ const CHANNELS = Object.freeze({
   FOCUS_RESULT: "gpt-obsidian:focus-result",
   BRIDGE_SENT: "gpt-obsidian:bridge-sent",
   BRIDGE_RESPONSE: "gpt-obsidian:bridge-response",
-  BRIDGE_ERROR: "gpt-obsidian:bridge-error"
+  BRIDGE_ERROR: "gpt-obsidian:bridge-error",
+  CLIPBOARD_WRITE: "gpt-obsidian:clipboard-write",
+  CLIPBOARD_RESULT: "gpt-obsidian:clipboard-result"
 });
 
 const CODE_TO_KEY = Object.freeze({
@@ -28,6 +35,173 @@ const CODE_TO_KEY = Object.freeze({
 let hotkeys = [];
 let activeBridge = null;
 let installed = false;
+let clipboardGestureUntil = 0;
+let clipboardRequestSerial = 0;
+const pendingClipboardWrites = new Map();
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(String(value)).byteLength;
+}
+
+function normalizeClipboardPayload(value) {
+  if (!value || typeof value !== "object" || typeof value.text !== "string") return null;
+  if (utf8ByteLength(value.text) > CLIPBOARD_MAX_BYTES) return null;
+  return { text: value.text };
+}
+
+function normalizeCssColor(value) {
+  const color = typeof value === "string" ? value.trim() : "";
+  if (!color || color.length > 80 || !/^(?:#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/iu.test(color)) return null;
+  return color;
+}
+
+function applyAppearance(payload) {
+  if (payload?.version !== PROTOCOL_VERSION) return false;
+  const textColor = normalizeCssColor(payload?.palette?.textColor);
+  const negative = normalizeCssColor(payload?.palette?.negative);
+  const negativeHover = normalizeCssColor(payload?.palette?.negativeHover);
+  if (!textColor || !negative || !negativeHover) return false;
+  const root = document.head || document.documentElement;
+  if (!root) return false;
+  const styleId = "gpt-obsidian-native-appearance";
+  let style = document.getElementById?.(styleId);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = styleId;
+    root.appendChild(style);
+  }
+  style.textContent = `
+:root {
+  --gpt-obsidian-text-color: ${textColor};
+  --gpt-obsidian-negative: ${negative};
+  --gpt-obsidian-negative-hover: ${negativeHover};
+  --text-primary: ${textColor} !important;
+  --text-secondary: ${textColor} !important;
+  --text-tertiary: ${textColor} !important;
+  --text-placeholder: ${textColor} !important;
+  --composer-blue-bg: ${negative} !important;
+  --composer-blue-hover: ${negativeHover} !important;
+}
+body :where(
+  div, p, span, a, button, label, textarea, input,
+  [contenteditable="true"], [role="button"], [role="menuitem"],
+  [role="option"], [role="tab"], h1, h2, h3, h4, h5, h6,
+  li, dt, dd, th, td, blockquote, figcaption, small, strong, em
+):not(pre):not(pre *):not(code):not(code *) {
+  color: var(--gpt-obsidian-text-color) !important;
+}
+#prompt-textarea, [data-testid="prompt-textarea"], textarea, input {
+  color: var(--gpt-obsidian-text-color) !important;
+  caret-color: var(--gpt-obsidian-text-color) !important;
+}
+#prompt-textarea::placeholder, [data-testid="prompt-textarea"]::placeholder,
+textarea::placeholder, input::placeholder, [data-placeholder]::before {
+  color: var(--gpt-obsidian-text-color) !important;
+}
+[data-message-author-role="user"] .user-message-bubble-color,
+[data-message-author-role="user"] [class*="user-message-bubble"],
+[data-message-author-role="user"] [class*="bg-token-message-surface"] {
+  background-color: var(--gpt-obsidian-negative) !important;
+}
+button[data-testid="send-button"], [data-testid="send-button"] {
+  background-color: var(--gpt-obsidian-negative) !important;
+  border-color: var(--gpt-obsidian-negative) !important;
+  color: var(--gpt-obsidian-text-color) !important;
+}
+button[data-testid="send-button"]:hover, [data-testid="send-button"]:hover {
+  background-color: var(--gpt-obsidian-negative-hover) !important;
+  border-color: var(--gpt-obsidian-negative-hover) !important;
+}`;
+  return true;
+}
+
+function isCopyButtonEvent(event) {
+  if (event?.isTrusted !== true) return false;
+  let target = event.target;
+  if (target?.nodeType === 3) target = target.parentElement;
+  const button = target?.closest?.("button");
+  if (!button) return false;
+  const label = [button.getAttribute?.("aria-label"), button.getAttribute?.("title"), button.innerText, button.textContent]
+    .filter((part) => typeof part === "string").join(" ").toLocaleLowerCase();
+  return /\bcopy\b|копир|скопир/u.test(label);
+}
+
+function handleCopyClick(event) {
+  if (!isCopyButtonEvent(event)) return false;
+  clipboardGestureUntil = Date.now() + CLIPBOARD_GESTURE_WINDOW_MS;
+  return true;
+}
+
+function handleClipboardResult(payload) {
+  if (payload?.version !== PROTOCOL_VERSION || typeof payload.requestId !== "string") return false;
+  const pending = pendingClipboardWrites.get(payload.requestId);
+  if (!pending) return false;
+  pendingClipboardWrites.delete(payload.requestId);
+  window.clearTimeout(pending.timer);
+  pending.resolve(payload.ok === true);
+  return true;
+}
+
+function requestClipboardFallback(value) {
+  const payload = normalizeClipboardPayload(value);
+  if (!payload || Date.now() > clipboardGestureUntil) return Promise.resolve(false);
+  clipboardGestureUntil = 0;
+  const requestId = `clipboard-${Date.now()}-${++clipboardRequestSerial}`;
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      pendingClipboardWrites.delete(requestId);
+      resolve(false);
+    }, CLIPBOARD_RESULT_TIMEOUT_MS);
+    pendingClipboardWrites.set(requestId, { resolve, timer });
+    send(CHANNELS.CLIPBOARD_WRITE, { version: PROTOCOL_VERSION, requestId, text: payload.text });
+  });
+}
+
+function installClipboardFallbackInPage(apiKey) {
+  const clipboard = globalThis.navigator?.clipboard;
+  const bridge = globalThis[apiKey];
+  if (!clipboard || typeof bridge?.fallbackWrite !== "function") return false;
+  const marker = "__gptObsidianFocusFallbackInstalled";
+  if (clipboard[marker] === true) return false;
+  const originalWriteText = typeof clipboard.writeText === "function" ? clipboard.writeText.bind(clipboard) : null;
+  const originalWrite = typeof clipboard.write === "function" ? clipboard.write.bind(clipboard) : null;
+  const isFocusError = (error) => /document is not focused/iu.test(String(error?.message || error || ""));
+  const fallback = async (error, text) => {
+    if (!isFocusError(error) || typeof text !== "string") throw error;
+    if (await bridge.fallbackWrite({ text }) !== true) throw error;
+  };
+  if (originalWriteText) {
+    Object.defineProperty(clipboard, "writeText", { configurable: true, writable: true, value: async (text) => {
+      try { return await originalWriteText(text); }
+      catch (error) { return fallback(error, String(text)); }
+    } });
+  }
+  if (originalWrite) {
+    Object.defineProperty(clipboard, "write", { configurable: true, writable: true, value: async (items) => {
+      try { return await originalWrite(items); }
+      catch (error) {
+        if (!isFocusError(error)) throw error;
+        const item = Array.isArray(items) ? items[0] : null;
+        if (!item?.types?.includes?.("text/plain") || typeof item.getType !== "function") throw error;
+        const blob = await item.getType("text/plain");
+        return fallback(error, await blob.text());
+      }
+    } });
+  }
+  Object.defineProperty(clipboard, marker, { configurable: false, enumerable: false, value: true });
+  return Boolean(originalWriteText || originalWrite);
+}
+
+function installClipboardPageBridge() {
+  if (!/^(chatgpt\.com|chat\.openai\.com)$/iu.test(String(globalThis.location?.hostname || ""))) return false;
+  if (typeof contextBridge?.exposeInMainWorld !== "function" || typeof contextBridge?.executeInMainWorld !== "function") return false;
+  try {
+    contextBridge.exposeInMainWorld(CLIPBOARD_API_KEY, { fallbackWrite: (payload) => requestClipboardFallback(payload) });
+    return contextBridge.executeInMainWorld({ func: installClipboardFallbackInPage, args: [CLIPBOARD_API_KEY] }) === true;
+  } catch (_) {
+    return false;
+  }
+}
 
 function normalizeKey(value) {
   if (value == null) return "";
@@ -336,7 +510,10 @@ function install() {
   if (installed || typeof window === "undefined" || typeof document === "undefined") return false;
   installed = true;
   window.addEventListener("keydown", handleKeydown, true);
+  window.addEventListener("click", handleCopyClick, true);
+  installClipboardPageBridge();
   ipcRenderer.on(CHANNELS.CONFIG, (_event, payload) => applyHotkeyConfig(payload));
+  ipcRenderer.on(CHANNELS.APPEARANCE, (_event, payload) => applyAppearance(payload));
   ipcRenderer.on(CHANNELS.FOCUS, (_event, payload) => {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
     const focused = focusPrompt();
@@ -344,6 +521,7 @@ function install() {
   });
   ipcRenderer.on(CHANNELS.BRIDGE_REQUEST, (_event, payload) => void startBridgeRequest(payload));
   ipcRenderer.on(CHANNELS.BRIDGE_CANCEL, (_event, payload) => clearBridge(payload?.requestId || null));
+  ipcRenderer.on(CHANNELS.CLIPBOARD_RESULT, (_event, payload) => handleClipboardResult(payload));
   const ready = () => send(CHANNELS.READY, { version: PROTOCOL_VERSION });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true });
   else ready();
@@ -353,17 +531,28 @@ function install() {
 if (typeof window !== "undefined" && typeof document !== "undefined") install();
 
 module.exports = {
+  CLIPBOARD_API_KEY,
+  CLIPBOARD_MAX_BYTES,
   CHANNELS,
   PROTOCOL_VERSION,
+  applyAppearance,
   applyHotkeyConfig,
   clearBridge,
   descriptorMatchesEvent,
   focusPrompt,
+  handleClipboardResult,
+  handleCopyClick,
   handleKeydown,
   install,
+  installClipboardFallbackInPage,
+  installClipboardPageBridge,
+  isCopyButtonEvent,
   keyCandidates,
+  normalizeClipboardPayload,
   normalizeKey,
   readConversationState,
+  requestClipboardFallback,
   startBridgeRequest,
+  utf8ByteLength,
   validDescriptor
 };
