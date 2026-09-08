@@ -310,11 +310,11 @@
     {
       "id": "updater-plugin",
       "name": "Updater Plugin",
-      "version": "0.11.4",
+      "version": "0.11.5",
       "path": "updater-plugin",
       "sourcePath": "updater-plugin/dev-source",
-      "sourceHash": "101402e4df8ca3e3995674b7b5529678b3b6ea1d21bca4ac76dd6d99a04f797f",
-      "runtimeHash": "bf732024ae30a164df66c475a917fbcff6ef3acc2f7ac2e5d6e94bd62a82855f",
+      "sourceHash": "65503866c6f75bcf1416481997f5f4461dec8900a240dfd8b270c1e1e5eaaea7",
+      "runtimeHash": "a59826b4d9ba925ac9089450cd3e5c43e34305956ee919e6af902f2ac82da556",
       "runtimeFiles": [
         "main.js",
         "manifest.json",

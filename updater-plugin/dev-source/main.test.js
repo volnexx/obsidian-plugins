@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Module = require("node:module");
+const projectManifest = require("./manifest.json");
 
 const notices = [];
 const Platform = { isDesktopApp: true, isMobileApp: false, isIosApp: false, isLinux: true };
@@ -11,7 +12,7 @@ class FileSystemAdapter {
 }
 
 class Plugin {
-  constructor(app = {}, manifest = { id: "updater-plugin", version: "0.11.4" }) {
+  constructor(app = {}, manifest = { ...projectManifest }) {
     this.app = app;
     this.manifest = manifest;
   }
@@ -25,7 +26,8 @@ class Plugin {
       appendChild(child) { this.children.push(child); }
     };
   }
-  addCommand() {}
+  addCommand(command) { (this.commands ||= []).push(command); }
+  registerView(type, factory) { (this.viewFactories ||= new Map()).set(type, factory); }
   addSettingTab() {}
   registerEvent() {}
   registerInterval() {}
@@ -43,11 +45,44 @@ class Setting {
   addButton() { return this; }
 }
 
+function element(tag = "div") {
+  const classes = new Set();
+  return {
+    tag, style: {}, children: [], attrs: {}, textContent: "", disabled: false,
+    classList: { toggle(name, on) { on ? classes.add(name) : classes.delete(name); } },
+    addClass(name) { classes.add(name); },
+    setAttribute(name, value) { this.attrs[name] = value; },
+    empty() { this.children.length = 0; },
+    appendChild(child) { this.children.push(child); },
+    createEl(childTag, options = {}) {
+      const child = element(childTag);
+      child.textContent = options.text || "";
+      if (options.cls) child.addClass(options.cls);
+      this.children.push(child);
+      return child;
+    },
+    focus() { assert.fail("Updater controls must not focus an editor or summon a keyboard"); }
+  };
+}
+
+class ItemView {
+  constructor(leaf) { this.leaf = leaf; this.contentEl = element(); }
+}
+
+class ButtonComponent {
+  constructor(container) { this.buttonEl = container.createEl("button"); }
+  setCta() { return this; }
+  setButtonText(value) { this.buttonEl.textContent = value; return this; }
+  setDisabled(value) { this.buttonEl.disabled = value; return this; }
+  onClick(callback) { this.callback = callback; return this; }
+  async click() { if (!this.buttonEl.disabled) return this.callback(); }
+}
+
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
   if (request === "obsidian") {
     return {
-      Plugin, PluginSettingTab, Setting,
+      Plugin, PluginSettingTab, Setting, ItemView, ButtonComponent,
       Notice: class Notice { constructor(message) { notices.push(String(message)); } },
       requestUrl: async () => { throw new Error("network disabled in tests"); },
       FileSystemAdapter,
@@ -844,3 +879,260 @@ test("mock onload works on desktop", async () => {
   assert.equal(plugin.getRegistryRepo(), "volnexx/obsidian-plugins");
   assert.equal(monitoring, 1);
 });
+
+async function controlsFixture({ desktop = false, PluginClass = UpdaterPlugin } = {}) {
+  Platform.isDesktopApp = desktop;
+  Platform.isMobileApp = !desktop;
+  Platform.isIosApp = !desktop;
+  global.document = { createElement: tag => element(tag) };
+  global.window = { setInterval: () => 1 };
+  const app = appFixture(desktop ? new FileSystemAdapter() : {});
+  const leaves = [];
+  const ready = [];
+  const reveals = [];
+  let creates = 0;
+  let pauseCreation = null;
+  const plugin = new PluginClass(app);
+  plugin.setupCodexStateMonitoring = () => {};
+  plugin.refreshRestoreActions = async () => {};
+  app.workspace.onLayoutReady = callback => ready.push(callback);
+  app.workspace.getLeavesOfType = type => leaves.filter(leaf => leaf.type === type);
+  app.workspace.getLeftLeaf = split => {
+    assert.equal(split, false);
+    creates++;
+    const leaf = {
+      type: "empty",
+      async setViewState(state) {
+        if (pauseCreation) await pauseCreation;
+        this.state = state;
+        this.type = state.type;
+        this.view = plugin.viewFactories.get(state.type)(this);
+        await this.view.onOpen();
+      },
+      detach() {
+        void this.view?.onClose?.();
+        const index = leaves.indexOf(this);
+        if (index >= 0) leaves.splice(index, 1);
+      }
+    };
+    leaves.push(leaf);
+    return leaf;
+  };
+  app.workspace.revealLeaf = async leaf => reveals.push(leaf);
+  await plugin.onload();
+  return {
+    plugin, app, leaves, ready, reveals,
+    get creates() { return creates; },
+    pause(promise) { pauseCreation = promise; },
+    async layoutReady() {
+      for (const callback of ready) callback();
+      await plugin._controlsOpening;
+    }
+  };
+}
+
+test("iPhone startup adds one left sidebar tab without starting updates or opening the drawer", async () => {
+  const fixture = await controlsFixture();
+  let starts = 0;
+  fixture.plugin.safeUpdateAll = async () => { starts++; };
+  await fixture.layoutReady();
+  assert.equal(fixture.creates, 1);
+  assert.equal(fixture.leaves[0].state.active, false);
+  assert.equal(fixture.leaves[0].view.getDisplayText(), "Обновление плагинов");
+  assert.equal(fixture.leaves[0].view.getIcon(), "refresh-cw");
+  assert.equal(fixture.reveals.length, 0);
+  assert.equal(starts, 0);
+  const view = fixture.leaves[0].view;
+  assert.equal(view.startButton.buttonEl.textContent, "P — обновить плагины");
+  assert.equal(view.startButton.buttonEl.disabled, false);
+  assert.equal(view.statusEl.attrs["aria-live"], "polite");
+  assert.ok(view.repositoryEl.textContent.includes("obsidian-plugins-iphone"));
+});
+
+test("desktop startup preserves the ribbon without automatically adding a sidebar tab", async () => {
+  const fixture = await controlsFixture({ desktop: true });
+  await fixture.layoutReady();
+  assert.equal(fixture.creates, 0);
+  assert.equal(fixture.reveals.length, 0);
+  let starts = 0;
+  fixture.plugin.safeUpdateAll = async () => { starts++; };
+  await fixture.plugin._updateRibbon.callback();
+  assert.equal(starts, 1);
+});
+
+test("the open-panel command reveals and reuses the mobile tab", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  const command = fixture.plugin.commands.find(item => item.id === "open-updater-controls");
+  assert.ok(command);
+  await command.callback();
+  await command.callback();
+  assert.equal(fixture.creates, 1);
+  assert.equal(fixture.reveals.length, 2);
+  assert.equal(fixture.reveals[0], fixture.leaves[0]);
+});
+
+test("startup and an immediate panel command share one pending tab creation", async () => {
+  const fixture = await controlsFixture();
+  let release;
+  fixture.pause(new Promise(resolve => { release = resolve; }));
+  const first = fixture.plugin.openUpdaterControls(false);
+  const second = fixture.plugin.openUpdaterControls();
+  assert.equal(fixture.creates, 1);
+  release();
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(left, right);
+  assert.equal(fixture.reveals.length, 1);
+});
+
+test("restored deferred control views are reused without assuming leaf.view is loaded", async () => {
+  const fixture = await controlsFixture();
+  const deferred = { type: helpers.updaterControlsViewType, view: { deferred: true } };
+  fixture.leaves.push(deferred);
+  await fixture.layoutReady();
+  assert.equal(fixture.creates, 0);
+  assert.equal(await fixture.plugin.openUpdaterControls(), deferred);
+  assert.equal(fixture.reveals[0], deferred);
+});
+
+test("mobile P delegates once to safeUpdateAll and prevents rapid duplicate taps", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  const view = fixture.leaves[0].view;
+  let release;
+  let calls = 0;
+  fixture.plugin.safeUpdateAll = () => { calls++; return new Promise(resolve => { release = resolve; }); };
+  const first = view.startButton.click();
+  await view.startButton.click();
+  await view.startUpdate();
+  assert.equal(calls, 1);
+  assert.equal(view.startButton.buttonEl.disabled, true);
+  assert.equal(view.startButton.buttonEl.textContent, "Обновление…");
+  release();
+  await first;
+  assert.equal(view.startButton.buttonEl.disabled, false);
+  assert.equal(view.startButton.buttonEl.textContent, "P — обновить плагины");
+});
+
+test("sidebar button recovers after an update rejects without announcing false success", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  const view = fixture.leaves[0].view;
+  fixture.plugin.safeUpdateAll = async () => { throw new Error("test update failed"); };
+  await assert.rejects(view.startUpdate(), /test update failed/);
+  assert.equal(view.startButton.buttonEl.disabled, false);
+  assert.ok(!view.statusEl.textContent.includes("успешно"));
+});
+
+test("sidebar follows the same dev lock even after settings buttons are recreated", async () => {
+  const fixture = await controlsFixture({ desktop: true });
+  await fixture.plugin.openUpdaterControls(false);
+  const view = fixture.leaves[0].view;
+  let syncs = 0;
+  fixture.plugin.getCodexLockState = async () => ({ active: true });
+  fixture.plugin.safeDesktopSynchronizeAll = async () => { syncs++; };
+  fixture.plugin.updateCodexUi(true);
+  assert.equal(view.startButton.buttonEl.disabled, true);
+  await view.startUpdate();
+  assert.equal(syncs, 0);
+  fixture.plugin.resetLockButtons();
+  fixture.plugin.updateCodexUi(false);
+  assert.equal(view.startButton.buttonEl.disabled, false);
+});
+
+test("an update started outside the sidebar updates its busy state and releases it on no-op", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  const view = fixture.leaves[0].view;
+  let release;
+  fixture.plugin.resolveRegistryPlugins = () => new Promise(resolve => { release = resolve; });
+  fixture.plugin.findUpdates = async () => [];
+  const operation = fixture.plugin.safeInstallAllFromRegistry();
+  assert.equal(view.startButton.buttonEl.disabled, true);
+  release({ all: [], installed: [], missing: [], ambiguous: [] });
+  await operation;
+  assert.equal(view.startButton.buttonEl.disabled, false);
+});
+
+test("sidebar source text follows saved repository settings", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  fixture.plugin.settings.registryRepo = "example/mobile-runtime";
+  await fixture.plugin.saveSettings();
+  assert.equal(fixture.leaves[0].view.repositoryEl.textContent, "Источник: example/mobile-runtime");
+});
+
+test("closing the sidebar during an update releases the view reference safely", async () => {
+  const fixture = await controlsFixture();
+  await fixture.layoutReady();
+  const view = fixture.leaves[0].view;
+  let release;
+  fixture.plugin.safeUpdateAll = () => new Promise(resolve => { release = resolve; });
+  const operation = view.startUpdate();
+  await view.onClose();
+  assert.equal(fixture.plugin._controlViews.size, 0);
+  release();
+  await operation;
+});
+
+test("plugin unload prevents delayed mobile startup from creating a sidebar", async () => {
+  const fixture = await controlsFixture();
+  fixture.plugin.onunload();
+  await fixture.layoutReady();
+  assert.equal(fixture.creates, 0);
+  assert.equal(await fixture.plugin.openUpdaterControls(), null);
+});
+
+test("plugin unload during pending sidebar creation removes the new view", async () => {
+  const fixture = await controlsFixture();
+  let release;
+  fixture.pause(new Promise(resolve => { release = resolve; }));
+  const opening = fixture.plugin.openUpdaterControls();
+  fixture.plugin.onunload();
+  release();
+  assert.equal(await opening, null);
+  assert.equal(fixture.leaves.length, 0);
+  assert.equal(fixture.plugin._controlViews.size, 0);
+  assert.equal(fixture.reveals.length, 0);
+});
+
+test("a missing left sidebar reports a recoverable error without running an update", async () => {
+  const fixture = await controlsFixture();
+  fixture.app.workspace.getLeftLeaf = () => null;
+  assert.equal(await fixture.plugin.openUpdaterControls(), null);
+  assert.ok(notices.at(-1).includes("настройках Updater Plugin"));
+});
+
+for (const isIosApp of [true, false]) {
+test(`fresh ${isIosApp ? "iPhone" : "Android"} module and sidebar need no Node imports or process global`, async () => {
+  const vm = require("node:vm");
+  const code = require("node:fs").readFileSync(require("node:path").join(__dirname, "main.js"), "utf8");
+  const imported = [];
+  const moduleObject = { exports: {} };
+  const sandbox = {
+    module: moduleObject,
+    console,
+    document: { createElement: tag => element(tag) },
+    require(id) {
+      imported.push(id);
+      assert.equal(id, "obsidian", "mobile imported a Node dependency");
+      return {
+        Plugin, PluginSettingTab, Setting, ItemView, ButtonComponent, FileSystemAdapter,
+        Platform: { isDesktopApp: false, isIosApp, isMobileApp: true },
+        Notice: class { constructor(message) { notices.push(String(message)); } },
+        normalizePath: value => value,
+        requestUrl: async () => assert.fail("opening the sidebar must not use the network"),
+        setIcon() {}
+      };
+    }
+  };
+  Object.defineProperty(sandbox, "process", { get() { assert.fail("mobile accessed process"); } });
+  vm.runInNewContext(code, sandbox);
+  const fixture = await controlsFixture({ PluginClass: moduleObject.exports });
+  await fixture.layoutReady();
+  assert.deepEqual(imported, ["obsidian"]);
+  assert.equal(fixture.plugin.node, null);
+  assert.equal(fixture.creates, 1);
+  assert.equal(fixture.leaves[0].view.startButton.buttonEl.disabled, false);
+});
+}

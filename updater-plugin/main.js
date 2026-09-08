@@ -1,5 +1,7 @@
 const {
   Plugin,
+  ItemView,
+  ButtonComponent,
   PluginSettingTab,
   Setting,
   Notice,
@@ -20,6 +22,7 @@ const DEFAULT_SETTINGS = {
 
 const MAIN_REGISTRY_REPO = "volnexx/obsidian-plugins";
 const MOBILE_REGISTRY_REPO = "volnexx/obsidian-plugins-iphone";
+const UPDATER_CONTROLS_VIEW = "updater-plugin-controls";
 const CODEX_LOCK_REL = "dev/.codex-active.json";
 const CODEX_LOCK_TOOLTIP = "Обновление заблокировано: работает Codex";
 const CODEX_LOCK_NOTICE = "Обновление заблокировано: активна сессия Codex.";
@@ -231,6 +234,79 @@ function codexLockIsFresh(data, now = Date.now()) {
   return age >= -CODEX_LOCK_FUTURE_TOLERANCE_MS && age <= CODEX_LOCK_STALE_MS;
 }
 
+class UpdaterControlsView extends ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.plugin = plugin;
+    this._submitting = false;
+  }
+
+  getViewType() { return UPDATER_CONTROLS_VIEW; }
+  getDisplayText() { return "Обновление плагинов"; }
+  getIcon() { return "refresh-cw"; }
+
+  async onOpen() {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("updater-plugin-controls");
+    container.createEl("h2", { text: "Обновление плагинов" });
+    container.createEl("p", {
+      text: "Проверить и обновить плагины. Перед установкой изменений создаётся резервная копия."
+    });
+    container.createEl("p", {
+      cls: "updater-plugin-controls-version",
+      text: `Updater ${this.plugin.manifest.version}`
+    });
+    this.startButton = new ButtonComponent(container)
+      .setCta()
+      .onClick(() => this.startUpdate());
+    this.startButton.buttonEl.addClass("updater-plugin-controls-start");
+    this.statusEl = container.createEl("p", { cls: "updater-plugin-controls-status" });
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    this.repositoryEl = container.createEl("p", { cls: "updater-plugin-controls-source" });
+    this.plugin._controlViews ||= new Set();
+    this.plugin._controlViews.add(this);
+    this.refreshState();
+  }
+
+  refreshState() {
+    if (!this.startButton) return;
+    const busy = !!(this._submitting || this.plugin._busy);
+    const locked = !!this.plugin._codexBlocked;
+    const unloaded = !!this.plugin._unloaded;
+    this.startButton
+      .setButtonText(busy ? "Обновление…" : "P — обновить плагины")
+      .setDisabled(busy || locked || unloaded);
+    this.startButton.buttonEl.setAttribute("aria-busy", String(busy));
+    this.statusEl.textContent = unloaded ? "Плагин отключён."
+      : locked ? CODEX_LOCK_TOOLTIP
+        : busy ? "Обновление выполняется. Дождись сообщения о результате."
+          : "Нажми P, чтобы запустить обновление.";
+    this.repositoryEl.textContent = `Источник: ${this.plugin.getRegistryRepo()}`;
+  }
+
+  async startUpdate() {
+    if (this._submitting || this.plugin._busy || this.plugin._unloaded) return;
+    this._submitting = true;
+    this.refreshState();
+    try {
+      // Every entry point uses the same lock, backup and update checks.
+      return await this.plugin.safeUpdateAll();
+    } finally {
+      this._submitting = false;
+      this.refreshState();
+    }
+  }
+
+  async onClose() {
+    this.plugin._controlViews?.delete(this);
+    this.startButton = null;
+    this.statusEl = null;
+    this.repositoryEl = null;
+  }
+}
+
 class UpdaterSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -242,6 +318,12 @@ class UpdaterSettingTab extends PluginSettingTab {
     containerEl.empty();
     this.plugin.resetLockButtons();
     containerEl.createEl("h2", { text: "Updater Plugin" });
+
+    new Setting(containerEl)
+      .setName("Панель обновления")
+      .setDesc("Открыть левую боковую панель с большой кнопкой P.")
+      .addButton(b => b.setButtonText("Открыть панель")
+        .onClick(() => this.plugin.openUpdaterControls()));
 
     new Setting(containerEl)
       .setName("Центральный репозиторий")
@@ -324,6 +406,7 @@ class UpdaterSettingTab extends PluginSettingTab {
 
 module.exports = class UpdaterPlugin extends Plugin {
   async onload() {
+    this._unloaded = false;
     this.isDesktopApp = !!Platform.isDesktopApp;
     this.adapter = this.app.vault.adapter;
     this.node = null;
@@ -345,16 +428,23 @@ module.exports = class UpdaterPlugin extends Plugin {
 
     await this.loadSettings();
 
+    this._lockButtons = new Set();
+    this._codexBlocked = false;
+    this._controlViews = new Set();
+    this.registerView(UPDATER_CONTROLS_VIEW, leaf => new UpdaterControlsView(leaf, this));
     this._restoreActionElements = new Set();
     this._restoreActionsByView = new WeakMap();
-    this.app.workspace?.onLayoutReady?.(() => { void this.refreshRestoreActions(); });
+    this.app.workspace?.onLayoutReady?.(() => {
+      if (this._unloaded) return;
+      void this.refreshRestoreActions();
+      // Create a mobile sidebar tab without expanding it, selecting it or focusing an editor.
+      if (!this.isDesktopApp) void this.openUpdaterControls(false);
+    });
     if (this.app.workspace?.on) {
       this.registerEvent(this.app.workspace.on("layout-change", () => { void this.refreshRestoreActions(); }));
       this.registerEvent(this.app.workspace.on("active-leaf-change", () => { void this.refreshRestoreActions(); }));
     }
 
-    this._lockButtons = new Set();
-    this._codexBlocked = false;
     const updateRibbon = this.addRibbonIcon("refresh-cw", "Обновить все наши плагины", () => this.safeUpdateAll());
     this._updateRibbon = updateRibbon || null;
     if (updateRibbon) {
@@ -379,6 +469,13 @@ module.exports = class UpdaterPlugin extends Plugin {
     }
 
     this.addCommand({
+      id: "open-updater-controls",
+      name: "Открыть панель обновления плагинов",
+      icon: "refresh-cw",
+      callback: () => this.openUpdaterControls()
+    });
+
+    this.addCommand({
       id: "safe-update-all-custom-plugins",
       name: "Обновить все наши плагины безопасно",
       callback: () => this.safeUpdateAll()
@@ -396,6 +493,9 @@ module.exports = class UpdaterPlugin extends Plugin {
   }
 
   onunload() {
+    this._unloaded = true;
+    this.refreshControlViews();
+    this._controlViews?.clear();
     try { this._codexLockWatcher?.close?.(); } catch {}
     this._codexLockWatcher = null;
     for (const el of this._restoreActionElements || []) {
@@ -416,6 +516,40 @@ module.exports = class UpdaterPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    this.refreshControlViews();
+  }
+
+  async openUpdaterControls(reveal = true) {
+    if (this._unloaded) return null;
+    const workspace = this.app.workspace;
+    // Also share the pending creation: startup and an immediate command must not add two tabs.
+    if (!this._controlsOpening) {
+      this._controlsOpening = (async () => {
+        let leaf = workspace.getLeavesOfType(UPDATER_CONTROLS_VIEW)[0];
+        if (!leaf) {
+          leaf = workspace.getLeftLeaf(false);
+          if (!leaf) throw new Error("Левая боковая панель недоступна.");
+          await leaf.setViewState({ type: UPDATER_CONTROLS_VIEW, active: false });
+          if (this._unloaded) { leaf.detach(); return null; }
+        }
+        return leaf;
+      })().finally(() => { this._controlsOpening = null; });
+    }
+    try {
+      const leaf = await this._controlsOpening;
+      if (!leaf || this._unloaded) return null;
+      // revealLeaf loads deferred views; do not assume that leaf.view is already an ItemView.
+      if (reveal) await workspace.revealLeaf(leaf);
+      return leaf;
+    } catch (error) {
+      console.error("[Updater Plugin] controls panel:", error);
+      new Notice(`Панель обновления не открылась: ${error.message}. Запуск доступен в настройках Updater Plugin.`, 10000);
+      return null;
+    }
+  }
+
+  refreshControlViews() {
+    for (const view of this._controlViews || []) view.refreshState();
   }
 
   getRegistryRepo() {
@@ -483,6 +617,7 @@ module.exports = class UpdaterPlugin extends Plugin {
     for (const button of this._lockButtons || []) {
       try { button.setDisabled?.(!!active); } catch {}
     }
+    this.refreshControlViews();
   }
 
   async refreshCodexState() {
@@ -2287,6 +2422,7 @@ module.exports = class UpdaterPlugin extends Plugin {
       return;
     }
     this._busy = true;
+    this.refreshControlViews();
     try { return await this.safeDesktopSynchronizeAll(); }
     catch (error) {
       console.error("[Updater Plugin] desktop sync:", error);
@@ -2294,6 +2430,7 @@ module.exports = class UpdaterPlugin extends Plugin {
       return null;
     } finally {
       this._busy = false;
+      this.refreshControlViews();
     }
   }
 
@@ -2303,6 +2440,7 @@ module.exports = class UpdaterPlugin extends Plugin {
       return;
     }
     this._busy = true;
+    this.refreshControlViews();
     const started = Date.now();
     try {
       const discovered = await this.resolveRegistryPlugins();
@@ -2367,6 +2505,7 @@ module.exports = class UpdaterPlugin extends Plugin {
       new Notice(`Ошибка обновления: ${e.message}`, 10000);
     } finally {
       this._busy = false;
+      this.refreshControlViews();
     }
   }
 
@@ -2680,6 +2819,8 @@ module.exports = class UpdaterPlugin extends Plugin {
 };
 
 module.exports.__test = {
+  UpdaterControlsView,
+  updaterControlsViewType: UPDATER_CONTROLS_VIEW,
   compareVersions,
   codexLockHeartbeatMs,
   codexLockIsFresh,

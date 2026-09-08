@@ -15,3 +15,40 @@
   filter: grayscale(1);
   cursor: not-allowed;
 }
+
+.updater-plugin-controls {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.updater-plugin-controls h2 {
+  margin: 0 0 12px;
+  font-size: var(--font-ui-large);
+}
+
+.updater-plugin-controls p {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.updater-plugin-controls .updater-plugin-controls-start {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  height: auto;
+  margin: 16px 0;
+  padding: 12px;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  white-space: normal;
+}
+
+.updater-plugin-controls-version,
+.updater-plugin-controls-source {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.updater-plugin-controls-status {
+  min-height: 3em;
+}
